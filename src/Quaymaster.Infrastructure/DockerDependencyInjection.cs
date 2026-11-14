@@ -65,6 +65,7 @@ public static class DockerDependencyInjection
         services.AddSingleton<IKvStore, KvStore>();
         services.AddSingleton<IIgnoreStore, IgnoreStore>();
         services.AddSingleton<IAuditReader, AuditReader>();
+        services.AddSingleton<IRunEnvironment, RunEnvironment>();
 
         // application services
         services.AddSingleton<IMutationGateway, MutationGateway>();
