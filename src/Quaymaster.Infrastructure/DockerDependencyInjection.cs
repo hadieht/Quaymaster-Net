@@ -1,0 +1,104 @@
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Quaymaster.Application.Abstractions;
+using Quaymaster.Application.Background;
+using Quaymaster.Application.Compose;
+using Quaymaster.Application.Configuration;
+using Quaymaster.Application.Docker;
+using Quaymaster.Application.Events;
+using Quaymaster.Application.Monitoring;
+using Quaymaster.Application.Operations;
+using Quaymaster.Application.Safety;
+using Quaymaster.Application.Stats;
+using Quaymaster.Application.Streaming;
+using Quaymaster.Domain.Redaction;
+using Quaymaster.Domain.Safety;
+using Quaymaster.Infrastructure.Compose;
+using Quaymaster.Infrastructure.Docker;
+using Quaymaster.Infrastructure.Hosting;
+using Quaymaster.Infrastructure.Host;
+using Quaymaster.Infrastructure.Persistence.Repositories;
+using Quaymaster.Infrastructure.Streaming;
+
+namespace Quaymaster.Infrastructure;
+
+public static class DockerDependencyInjection
+{
+    /// <summary>
+    /// Docker core: engine adapter, the mutation gateway, services, background collectors and the SSE hub. Everything the
+    /// tests need to fake sits behind an interface registered with <c>TryAdd</c> semantics where a seam is intended
+    /// (<see cref="IDockerEngine"/>, <see cref="IDockerCommands"/>, <see cref="IComposeCli"/>, <see cref="IStackFiles"/>,
+    /// <see cref="ISelfProbe"/>, <see cref="IHostProbe"/>).
+    /// </summary>
+    public static IServiceCollection AddQuaymasterDocker(this IServiceCollection services, QmConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(config);
+
+        services.AddSingleton<Scrubber>();
+        services.AddSingleton(new SafetyPolicy(new SafetyOptions(config.ReadOnly, config.ManagedScope, config.VisibleScope, config.ProtectedNames)));
+        services.AddSingleton<Broadcaster<DockerEventRecord>>();
+        services.AddSingleton<Broadcaster<StatsSampleEvent>>();
+
+        // adapters (fakeable seams)
+        services.AddSingleton<DockerEngineAdapter>();
+        services.AddSingleton<IDockerEngine>(sp => sp.GetRequiredService<DockerEngineAdapter>());
+        services.AddSingleton<IDockerCommands>(sp => sp.GetRequiredService<DockerEngineAdapter>());
+        services.AddSingleton<IComposeCli, ComposeCli>();
+        services.AddSingleton<ISelfProbe, SelfProbe>();
+        services.AddSingleton<IHostProbe>(_ => new HostProbe());
+        services.AddSingleton<DockerBootstrap>();
+        services.AddSingleton<IStackFiles>(sp =>
+        {
+            var bootstrap = sp.GetRequiredService<DockerBootstrap>();
+            return new StackFiles(config, () => bootstrap.DockerRoot, () => bootstrap.MountRoots);
+        });
+
+        // persistence
+        services.AddSingleton<IEventStore, EventStore>();
+        services.AddSingleton<IStatsStore, StatsStore>();
+        services.AddSingleton<IOperationStore, OperationStore>();
+        services.AddSingleton<IKvStore, KvStore>();
+        services.AddSingleton<IIgnoreStore, IgnoreStore>();
+        services.AddSingleton<IAuditReader, AuditReader>();
+
+        // application services
+        services.AddSingleton<IMutationGateway, MutationGateway>();
+        services.AddSingleton<IIgnoreList, IgnoreList>();
+        services.AddSingleton<IOperationManager, OperationManager>();
+        services.AddSingleton<Func<IRecreator>>(sp => () => sp.GetRequiredService<IRecreator>());
+        services.AddSingleton<IContainerService, ContainerService>();
+        services.AddSingleton<ComposeService>();
+        services.AddSingleton<IComposeService>(sp => sp.GetRequiredService<ComposeService>());
+        services.AddSingleton<IRecreator>(sp => sp.GetRequiredService<ComposeService>());
+        services.AddSingleton<IContainerQueries, ContainerQueries>();
+        services.AddSingleton<IDiskUsageService, DiskUsageService>();
+        services.AddSingleton<IInventoryService, InventoryService>();
+        services.AddSingleton<IEventQueries, EventQueries>();
+        services.AddSingleton<IEventStreamStatus>(sp => sp.GetRequiredService<EventWatcher>());
+        services.AddSingleton<ISystemService, SystemService>();
+        services.AddSingleton<INotificationSink, AuditNotificationSink>();
+
+        // background collectors
+        services.AddSingleton<EventWatcher>();
+        services.AddSingleton<IQMBackgroundTask>(sp => sp.GetRequiredService<EventWatcher>());
+        services.AddSingleton<StatsSampler>();
+        services.AddSingleton<IStatsSampler>(sp => sp.GetRequiredService<StatsSampler>());
+        services.AddSingleton<IQMBackgroundTask>(sp => sp.GetRequiredService<StatsSampler>());
+        services.AddSingleton<Monitors>();
+        services.AddSingleton<IMonitorSettingsService>(sp => sp.GetRequiredService<Monitors>());
+        services.AddSingleton<IQMBackgroundTask>(sp => sp.GetRequiredService<Monitors>());
+        services.AddSingleton<IQMBackgroundTask, RetentionTask>();
+
+        // SSE
+        services.AddSingleton(config.Sse);
+        services.AddSingleton<SseHub>();
+        services.AddSingleton<ISseHub>(sp => sp.GetRequiredService<SseHub>());
+        services.AddSingleton<IStreamCounter>(sp => sp.GetRequiredService<SseHub>());
+
+        // after StartupInitializer (database first)
+        services.AddHostedService<DockerStartupService>();
+
+        return services;
+    }
+}

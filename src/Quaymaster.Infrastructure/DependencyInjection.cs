@@ -59,7 +59,8 @@ public static class DependencyInjection
         services.AddSingleton<IAuditLog>(sp => new AuditLog(
             sp.GetRequiredService<IAuditRepository>(),
             sp.GetRequiredService<TimeProvider>(),
-            config.AuditRetentionDays));
+            config.AuditRetentionDays,
+            sp.GetRequiredService<Quaymaster.Domain.Redaction.Scrubber>()));
 
         // hosted machinery: StartupInitializer MUST be registered before the background host
         services.AddHostedService(sp =>
@@ -68,6 +69,7 @@ public static class DependencyInjection
             return ActivatorUtilities.CreateInstance<StartupInitializer>(sp);
         });
         services.AddSingleton<IQMBackgroundTask, HousekeepingTask>();
+        services.AddQuaymasterDocker(config);
         services.AddHostedService<QmBackgroundHost>();
         return services;
     }

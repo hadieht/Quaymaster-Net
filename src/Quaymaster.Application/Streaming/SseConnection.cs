@@ -33,11 +33,17 @@ public interface ISseConnection
     void Close(string reason);
 
     void OnClose(Action callback);
+
+    /// <summary>Called by the writer after a frame left the process, releasing its share of the buffer budget.</summary>
+    void Written(SseFrame frame);
 }
 
 public interface ISseHub
 {
     int Count { get; }
+
+    /// <summary>Opens a stream bound to the caller's session; throws 429 when a per-session or total limit is reached.</summary>
+    ISseConnection Open(Auth.AuthContext auth);
 }
 
 /// <summary>

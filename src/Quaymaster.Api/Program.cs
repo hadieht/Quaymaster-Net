@@ -105,6 +105,9 @@ if (webDir is not null)
 var api = app.MapGroup("/api/v1");
 AuthEndpoints.Map(api);
 UsersEndpoints.Map(api);
+DockerEndpoints.Map(api);
+MiscEndpoints.Map(api);
+StreamEndpoints.Map(api);
 SiteEndpoints.Map(app, webDir);
 
 // The machine-readable API description is a development aid, not part of the public surface.

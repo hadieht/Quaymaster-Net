@@ -97,3 +97,35 @@ tests: Microsoft.Extensions.TimeProvider.Testing 10.5.0. Tool: `dotnet-ef` 10.0.
 
 **Known limits**: no `GET /audit` yet; `SecretBox` (AES-GCM) not ported (needed by notifications/registry phases); login limiter state is in
 memory (same as the original); redaction module not ported; `Kestrel` 431/400 protocol-level rejections are not enveloped.
+
+## T2 — Docker core: containers, compose, system, events, operations, SSE (forge, 2026-11-14) — **PARTIAL: implementation done, tests NOT yet written**
+
+**Status**: all T2 endpoints are implemented and were exercised live against the real daemon (`scripts/smoke-t2.sh`, read-only
+posture). `dotnet build --no-incremental` = 0 warnings / 0 errors; the T1 suites still pass (183 unit + 56 integration).
+**Missing (must be done next): the T2 unit tests, the faked-`IDockerEngine` integration tests, the `[Trait("Category","Live")]` tests,
+`npm run build` re-run, the final live-smoke assertions as checks.**
+
+**Endpoints** (`/api/v1`): `GET /system/mode|health|info|host|df[?refresh=1]` · `GET /containers`, `/containers/:ref`, `/:ref/logs` (logs:read),
+`/:ref/stats`, `/:ref/stats/history?minutes`, `POST /containers/:ref/actions/:action` (admin) · `GET /compose/projects`, `/:name`, `/:name/graph`,
+`/:name/config`, `/:name/validate`, `POST /compose/projects/:name/actions/:action` (admin, 202 `{operationId}`) · `GET /images|/images/:ref|/volumes|/volumes/:name|/networks|/networks/:ref` ·
+`GET /events`, `GET /audit` (admin), `GET /operations`, `/operations/:id` · `GET|PUT /monitors/settings` (PUT admin) ·
+SSE `GET /stream/events|stats|logs/:ref|operations/:id`.
+
+**Layout**: Domain `Redaction/` (Redactor + Scrubber = port of redact.ts), `Safety/SafetyPolicy` (guard.ts decisions, pure), `Compose/DependencyGraph`,
+`Stats/StatsMath`, `Docker/DockerNames`. Application `Docker/` (ContainerService, InventoryServices, SystemServices, IDockerEngine/IDockerCommands, stores),
+`Compose/` (ComposeArgv allow-list, ComposeDiscovery, ComposeService), `Safety/` (MutationGateway, DockerBootstrap, SelfDetection), `Operations/`,
+`Events/` (EventSanitizer, InventoryDiff, EventWatcher), `Stats/StatsSampler`, `Monitoring/Monitors`, `Streaming/SseConnection`. Infrastructure `Docker/` (adapter),
+`Compose/` (ComposeCli, StackFiles), `Streaming/SseHub`, `Host/`, `Persistence/Repositories/DockerStores.cs`, `DockerDependencyInjection.cs`. Api `Endpoints/{Docker,Misc,Stream}Endpoints.cs`, `Http/SseResult.cs`.
+
+**Decisions**
+- **Docker.DotNet**: package `Docker.DotNet.Enhanced` **4.4.1** (the maintained fork; original `Docker.DotNet` stops at 3.125.15, same `Docker.DotNet` namespace; client via `DockerClientBuilder`).
+  Hybrid adapter: Docker.DotNet for ping/version and the seven lifecycle commands (by full 64-hex id; remove is never forced, never `-v`); a small GET-only socket client for inspect/list/info/df/events/logs/stats so the daemon's PascalCase JSON passes through unchanged (typed models drop fields). API version = min(daemon, 1.55), refuses < 1.40.
+- **Single gateway** `MutationGateway`: the only class allowed to use `IDockerCommands` and `IComposeCli`; read-only / managed scope / self-protection (`SafetyPolicy`) / audit. Audit params are now redacted (`AuditLog` takes the shared `Scrubber`; `Redactor.RedactDeep` on every param object).
+- No SQL entities for events/stats_rollups/operations/kv/ignored_targets: parameterised SQL over the Baseline tables (no model-snapshot churn).
+- Container `recreate` answers **200** `{ok:true, operationId}` exactly like the original route (the brief said 202; the original returns 200; the web UI does not care). Compose actions answer 202.
+- Compose action `pull` (listed in the brief) does **not** exist in the original (pull would move tags outside the staged workflow) → unknown action = 400. 
+- A daemon that is down at start does not stop the app: reads answer 503 `docker_unavailable`, `DockerBootstrap` retries lazily (and in the background).
+- `GET /ignored*` routes and the "stop monitoring" write side are not part of T2; the ignore list is *read* (filters containers, projects, events).
+
+**Known gaps for T3–T5**: read-only file helper (`compose/helper.ts`) not ported → limited projects have `fileAccess:"none"`; maintenance gate (`assertNotUnderMaintenance`) not wired; monitors cover container/host alerts only (update/maintenance monitors + real notification delivery = T5; default sink writes `monitor.alert` audit rows with an in-memory cool-down);
+stats history/ring buffer are in-memory + rollups; SSE `/stream/maintenance` is T4; image/volume/network removal & prune, registry, updates = later phases.
