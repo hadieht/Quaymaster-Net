@@ -3,6 +3,7 @@ using Quaymaster.Api.Http;
 using Quaymaster.Application.Maintenance;
 using Quaymaster.Application.Validation;
 using Quaymaster.Domain.Identity;
+using Quaymaster.Domain.Maintenance;
 
 namespace Quaymaster.Api.Endpoints;
 
@@ -85,6 +86,47 @@ public static class MaintenanceEndpoints
                 new PlanRequest(b.Project!, b.Services, ApplyDrift: b.ApplyDrift == true, AllowUnhealthy: b.AllowUnhealthy == true),
                 http.ActorOf(),
                 http.RequestAborted);
+        });
+
+        // ---- runs (T4b) -------------------------------------------------------------------------------------------------------
+        api.MapGet("/maintenance/runs", async (HttpContext http, IRunService runs) =>
+        {
+            var q = new QueryReader(k => http.Request.Query[k].FirstOrDefault());
+            var limit = q.NumberInRange("limit", 1, 200, 50) ?? 50;
+            var status = q.Text("status", 40);
+            var target = q.Text("target", 200);
+            q.ThrowIfInvalid();
+            return await runs.ListAsync(limit, status, target, http.RequestAborted);
+        });
+
+        api.MapGet("/maintenance/runs/{id}", async (HttpContext http, string id, IRunService runs) => await runs.GetAsync(id, http.RequestAborted));
+
+        // Creates an update run from a fresh plan. It waits for approval unless `startNow` (+ `confirm` = project) or the unattended truth table holds.
+        admin.MapPost("/maintenance/runs", async (HttpContext http, IValidator<RunBody> validator, IRunService runs) =>
+        {
+            var b = await StrictJsonBody.ReadAsync(http, validator);
+            var run = await runs.CreateAsync(
+                new CreateRunRequest(b.Project!, b.Services, b.ApplyDrift == true, b.AllowUnhealthy == true, b.StartNow == true, b.Confirm, b.WindowId, b.IgnoreWindow == true),
+                http.ActorOf(),
+                null,
+                http.RequestAborted);
+            return Results.Json(run, statusCode: run.Status is RunStatuses.Approved or RunStatuses.Running ? StatusCodes.Status202Accepted : StatusCodes.Status201Created);
+        });
+
+        admin.MapPost("/maintenance/runs/{id}/approve", async (HttpContext http, string id, IValidator<ApproveBody> validator, IRunService runs) =>
+        {
+            var b = await StrictJsonBody.ReadAsync(http, validator);
+            return Results.Json(await runs.ApproveAsync(id, b.PlanHash!, http.ActorOf(), http.RequestAborted), statusCode: StatusCodes.Status202Accepted);
+        });
+
+        admin.MapPost("/maintenance/runs/{id}/reject", async (HttpContext http, string id, IRunService runs) =>
+            await runs.RejectAsync(id, http.ActorOf(), http.RequestAborted));
+
+        // One-click restore of the run's recovery points (confirm = the run's target).
+        admin.MapPost("/maintenance/runs/{id}/restore", async (HttpContext http, string id, IValidator<RestoreBody> validator, IRunService runs) =>
+        {
+            var b = await StrictJsonBody.ReadAsync(http, validator);
+            return Results.Json(await runs.RestoreAsync(id, b, http.ActorOf(), http.RequestAborted), statusCode: StatusCodes.Status202Accepted);
         });
     }
 }

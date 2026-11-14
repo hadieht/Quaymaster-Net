@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using Quaymaster.Application.Background;
 using Quaymaster.Application.Configuration;
 using Quaymaster.Application.Docker;
+using Quaymaster.Application.Maintenance;
 using Quaymaster.Application.Errors;
 using Quaymaster.Application.Operations;
 using Quaymaster.Application.Safety;
@@ -19,6 +20,7 @@ namespace Quaymaster.Infrastructure.Hosting;
 internal sealed partial class DockerStartupService(
     IOperationManager operations,
     IIgnoreList ignore,
+    IRunRecoveryService runRecovery,
     DockerBootstrap bootstrap,
     SseHub hub,
     QmConfig config,
@@ -30,6 +32,12 @@ internal sealed partial class DockerStartupService(
         if (interrupted > 0)
         {
             Log.Interrupted(log, interrupted);
+        }
+
+        var runsInterrupted = await runRecovery.RecoverAsync(cancellationToken);
+        if (runsInterrupted > 0)
+        {
+            Log.RunsInterrupted(log, runsInterrupted);
         }
 
         await ignore.RefreshAsync(cancellationToken, force: true);
@@ -59,6 +67,9 @@ internal sealed partial class DockerStartupService(
     {
         [LoggerMessage(EventId = 150, Level = LogLevel.Warning, Message = "{Count} operation(s) left running by a previous crash were marked failed (interrupted)")]
         public static partial void Interrupted(ILogger logger, int count);
+
+        [LoggerMessage(EventId = 152, Level = LogLevel.Error, Message = "{Count} maintenance run(s) were in progress when Quaymaster stopped; they are interrupted, never resumed (see the run guidance)")]
+        public static partial void RunsInterrupted(ILogger logger, int count);
 
         [LoggerMessage(EventId = 151, Level = LogLevel.Warning, Message = "Docker is not available yet ({Reason}); requests answer docker_unavailable until it is")]
         public static partial void DockerNotReady(ILogger logger, string reason);

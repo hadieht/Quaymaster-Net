@@ -36,6 +36,9 @@ public interface IRollbackStore
     Task ReleaseAsync(string tag, CancellationToken ct);
 
     Task<IReadOnlyList<RollbackPoint>> ListAsync(int limit, CancellationToken ct);
+
+    /// <summary>Every recovery point of one run (released or not).</summary>
+    Task<IReadOnlyList<RollbackPoint>> ForRunAsync(string runId, CancellationToken ct);
 }
 
 public interface IQuarantineStore

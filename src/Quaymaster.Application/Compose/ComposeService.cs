@@ -46,6 +46,9 @@ public interface IComposeService
     /// <summary>Wanted <c>compose config --hash</c> per service plus the drift decision against the running containers (RT-01).</summary>
     Task<ComposeDriftCheck> HashesAndDriftAsync(string name, IReadOnlyList<string> serviceNames, CancellationToken ct);
 
+    /// <summary>Where Compose is anchored for a <c>full</c>-capability project (throws <c>limited_capability</c> otherwise).</summary>
+    Task<ComposeTarget> TargetAsync(string name, CancellationToken ct);
+
     void Invalidate();
 }
 
@@ -466,6 +469,8 @@ public sealed partial class ComposeService(
 
         return new ComposePlanContext(summary, validation, cfg, error, await RawContainersAsync(name, true, ct));
     }
+
+    public async Task<ComposeTarget> TargetAsync(string name, CancellationToken ct) => FullTarget(await SummaryAsync(name, false, ct));
 
     public async Task<ComposeDriftCheck> HashesAndDriftAsync(string name, IReadOnlyList<string> serviceNames, CancellationToken ct)
     {

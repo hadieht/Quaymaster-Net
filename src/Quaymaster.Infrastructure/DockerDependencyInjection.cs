@@ -115,6 +115,17 @@ public static class DockerDependencyInjection
         services.AddSingleton<ScheduleService>();
         services.AddSingleton<IPlanService, PlannerService>();
 
+        // run lifecycle: executor, approval, rollback, restore, crash recovery (T4b)
+        services.AddSingleton<IMaintenanceGate, MaintenanceGate>();
+        services.AddSingleton<IRunEnvironment, RunEnvironment>();
+        services.AddSingleton<IHttpProbe, HttpStatusProbe>();
+        services.AddSingleton(new HealthTimings());
+        services.AddSingleton<HealthGate>();
+        services.AddSingleton<RunHooks>();
+        services.AddSingleton<IRunExecutor, RunExecutor>();
+        services.AddSingleton<IRunService, RunService>();
+        services.AddSingleton<IRunRecoveryService, RunRecoveryService>();
+
         // background collectors
         services.AddSingleton<EventWatcher>();
         services.AddSingleton<IQMBackgroundTask>(sp => sp.GetRequiredService<EventWatcher>());

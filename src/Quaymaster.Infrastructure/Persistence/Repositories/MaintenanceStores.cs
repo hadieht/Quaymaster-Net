@@ -111,6 +111,25 @@ internal sealed class RunSqlRow
     public long? StartedAt { get; set; }
 
     public long? FinishedAt { get; set; }
+
+    public string Options { get; set; } = "{}";
+}
+
+internal sealed class IntentSqlRow
+{
+    public long Id { get; set; }
+
+    public string OperationId { get; set; } = "";
+
+    public string? Service { get; set; }
+
+    public string Action { get; set; } = "";
+
+    public string? FromImage { get; set; }
+
+    public string? ToImage { get; set; }
+
+    public string ContainerIdsBefore { get; set; } = "[]";
 }
 
 internal sealed class RunStepSqlRow
@@ -324,7 +343,32 @@ internal sealed class RunStore(IDbContextFactory<AppDbContext> factory) : IRunSt
     private const string Select = @"SELECT id AS Id, kind AS Kind, trigger AS Trigger, schedule_id AS ScheduleId, occurrence_utc AS OccurrenceUtc, window_id AS WindowId,
         window_end_utc AS WindowEndUtc, target AS Target, status AS Status, reason AS Reason, plan AS Plan, plan_hash AS PlanHash, requested_by AS RequestedBy,
         approval_expires_at AS ApprovalExpiresAt, approved_by AS ApprovedBy, approved_at AS ApprovedAt, approved_plan_hash AS ApprovedPlanHash,
-        result AS Result, guidance AS Guidance, created_at AS CreatedAt, started_at AS StartedAt, finished_at AS FinishedAt FROM runs";
+        result AS Result, guidance AS Guidance, created_at AS CreatedAt, started_at AS StartedAt, finished_at AS FinishedAt, options AS Options FROM runs";
+
+    private static RunInfo ToInfo(RunSqlRow r) => new()
+    {
+        Id = r.Id,
+        Kind = r.Kind,
+        Trigger = r.Trigger,
+        ScheduleId = r.ScheduleId,
+        Occurrence = MaintenanceJson.Iso(r.OccurrenceUtc),
+        WindowId = r.WindowId,
+        WindowEnd = MaintenanceJson.Iso(r.WindowEndUtc),
+        Target = r.Target,
+        Status = r.Status,
+        Reason = r.Reason,
+        PlanHash = r.PlanHash,
+        RequestedBy = r.RequestedBy,
+        ApprovalExpiresAt = MaintenanceJson.Iso(r.ApprovalExpiresAt),
+        ApprovedBy = r.ApprovedBy,
+        ApprovedAt = MaintenanceJson.Iso(r.ApprovedAt),
+        ApprovedPlanHash = r.ApprovedPlanHash,
+        Result = r.Result is null ? null : JsonSerializer.Deserialize<RunResult>(r.Result, MaintenanceJson.Options),
+        Guidance = r.Guidance is null ? null : JsonSerializer.Deserialize<List<string>>(r.Guidance, MaintenanceJson.Options),
+        CreatedAt = ImageReferences.Iso(r.CreatedAt),
+        StartedAt = MaintenanceJson.Iso(r.StartedAt),
+        FinishedAt = MaintenanceJson.Iso(r.FinishedAt),
+    };
 
     public async Task InsertAsync(NewRun run, CancellationToken ct)
     {
@@ -333,9 +377,153 @@ internal sealed class RunStore(IDbContextFactory<AppDbContext> factory) : IRunSt
         var options = run.Options.ToJsonString();
         await using var db = await factory.CreateDbContextAsync(ct);
         await db.Database.ExecuteSqlInterpolatedAsync(
-            $@"INSERT INTO runs (id, kind, trigger, target, status, reason, plan, plan_hash, requested_by, options, created_at)
-               VALUES ({run.Id}, {run.Kind}, {run.Trigger}, {run.Target}, {run.Status}, {run.Reason}, {plan}, {run.Plan?.PlanHash}, {run.RequestedBy}, {options}, {run.CreatedAt})",
+            $@"INSERT INTO runs (id, kind, trigger, schedule_id, occurrence_utc, window_id, target, status, reason, plan, plan_hash, requested_by, approval_expires_at, options, created_at)
+               VALUES ({run.Id}, {run.Kind}, {run.Trigger}, {run.ScheduleId}, {run.OccurrenceUtc}, {run.WindowId}, {run.Target}, {run.Status}, {run.Reason}, {plan}, {run.Plan?.PlanHash}, {run.RequestedBy}, {run.ApprovalExpiresAt}, {options}, {run.CreatedAt})",
             ct);
+    }
+
+    public async Task<RunMeta?> GetMetaAsync(string id, CancellationToken ct)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var r = await db.Database.SqlQueryRaw<RunSqlRow>(Select + " WHERE id = {0}", id).FirstOrDefaultAsync(ct);
+        return r is null ? null : new RunMeta(JsonNode.Parse(r.Options) as JsonObject ?? [], r.ApprovalExpiresAt, r.StartedAt, r.WindowEndUtc, r.WindowId, r.ScheduleId);
+    }
+
+    public async Task<IReadOnlyList<RunInfo>> ListAsync(int limit, string? status, string? target, CancellationToken ct)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var sql = Select + " WHERE 1 = 1";
+        var args = new List<object>();
+        if (status is not null)
+        {
+            sql += " AND status = {" + args.Count + "}";
+            args.Add(status);
+        }
+
+        if (target is not null)
+        {
+            sql += " AND target = {" + args.Count + "}";
+            args.Add(target);
+        }
+
+        sql += " ORDER BY created_at DESC, rowid DESC LIMIT {" + args.Count + "}";
+        args.Add(limit);
+        var rows = await db.Database.SqlQueryRaw<RunSqlRow>(sql, [.. args]).ToListAsync(ct);
+        return [.. rows.Select(ToInfo)];
+    }
+
+    public async Task<RunInfo?> RunningAsync(CancellationToken ct)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var r = await db.Database.SqlQueryRaw<RunSqlRow>(Select + " WHERE status = 'running' LIMIT 1").FirstOrDefaultAsync(ct);
+        return r is null ? null : ToInfo(r);
+    }
+
+    public async Task<bool> ApproveAsync(string id, string by, string planHash, long now, CancellationToken ct)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        return await db.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE runs SET status = 'approved', approved_by = {by}, approved_at = {now}, approved_plan_hash = {planHash} WHERE id = {id} AND status = 'awaiting_approval'", ct) > 0;
+    }
+
+    public async Task<bool> MarkRunningAsync(string id, long now, CancellationToken ct)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        return await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE runs SET status = 'running', started_at = {now} WHERE id = {id} AND status = 'approved'", ct) > 0;
+    }
+
+    public async Task SetWindowEndAsync(string id, long windowEndUtc, CancellationToken ct)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE runs SET window_end_utc = {windowEndUtc} WHERE id = {id}", ct);
+    }
+
+    public async Task FinishAsync(string id, string status, RunResult? result, IReadOnlyList<string>? guidance, string? reason, long now, CancellationToken ct)
+    {
+        var res = result is null ? null : JsonSerializer.Serialize(result, MaintenanceJson.Options);
+        var guide = guidance is null ? null : JsonSerializer.Serialize(guidance, MaintenanceJson.Options);
+        await using var db = await factory.CreateDbContextAsync(ct);
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE runs SET status = {status}, result = {res}, guidance = {guide}, reason = {reason}, finished_at = {now} WHERE id = {id}", ct);
+    }
+
+    public async Task<IReadOnlyList<RunInfo>> ExpireApprovalsAsync(long now, CancellationToken ct)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var rows = await db.Database.SqlQueryRaw<RunSqlRow>(
+            Select + " WHERE status = 'awaiting_approval' AND approval_expires_at IS NOT NULL AND approval_expires_at <= {0}", now).ToListAsync(ct);
+        if (rows.Count > 0)
+        {
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE runs SET status = 'skipped', finished_at = {now}, reason = 'approval expired' WHERE status = 'awaiting_approval' AND approval_expires_at IS NOT NULL AND approval_expires_at <= {now}", ct);
+        }
+
+        return [.. rows.Select(ToInfo)];
+    }
+
+    public async Task<IReadOnlyList<RunInfo>> InterruptRunningAsync(long now, CancellationToken ct)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var rows = await db.Database.SqlQueryRaw<RunSqlRow>(Select + " WHERE status = 'running' ORDER BY created_at").ToListAsync(ct);
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE runs SET status = 'interrupted', finished_at = {now}, reason = 'Quaymaster stopped while this run was in progress' WHERE status = 'running'", ct);
+        return [.. rows.Select(ToInfo)];
+    }
+
+    public async Task<int> InterruptApprovedAsync(long now, CancellationToken ct)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        return await db.Database.ExecuteSqlInterpolatedAsync(
+            $"UPDATE runs SET status = 'interrupted', finished_at = {now}, reason = 'Quaymaster stopped before this approved run started; nothing was changed' WHERE status = 'approved'", ct);
+    }
+
+    public async Task<int> StartStepAsync(string runId, int seq, string? service, string stepName, long now, CancellationToken ct)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        await db.Database.OpenConnectionAsync(ct);
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"INSERT INTO run_steps (run_id, seq, service, step, status, started_at) VALUES ({runId}, {seq}, {service}, {stepName}, 'running', {now})", ct);
+        return (int)(await db.Database.SqlQueryRaw<long>("SELECT last_insert_rowid() AS Value").ToListAsync(ct))[0];
+    }
+
+    public async Task FinishStepAsync(int stepId, string status, JsonObject? detail, long now, CancellationToken ct)
+    {
+        var d = detail?.ToJsonString();
+        await using var db = await factory.CreateDbContextAsync(ct);
+        await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE run_steps SET status = {status}, finished_at = {now}, detail = {d} WHERE id = {stepId}", ct);
+    }
+
+    public async Task FailOpenStepsAsync(string runId, long now, CancellationToken ct)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE run_steps SET status = 'failed', finished_at = {now} WHERE run_id = {runId} AND status = 'running'", ct);
+    }
+
+    public async Task<long> AddIntentAsync(NewIntent intent, long now, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(intent);
+        var ids = JsonSerializer.Serialize(intent.ContainerIdsBefore, MaintenanceJson.Options);
+        await using var db = await factory.CreateDbContextAsync(ct);
+        await db.Database.OpenConnectionAsync(ct);
+        await db.Database.ExecuteSqlInterpolatedAsync(
+            $"INSERT INTO intents (operation_id, service, action, from_image, to_image, container_ids_before, created_at) VALUES ({intent.OperationId}, {intent.Service}, {intent.Action}, {intent.FromImage}, {intent.ToImage}, {ids}, {now})", ct);
+        return (await db.Database.SqlQueryRaw<long>("SELECT last_insert_rowid() AS Value").ToListAsync(ct))[0];
+    }
+
+    public async Task CompleteIntentAsync(long id, long now, CancellationToken ct)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE intents SET completed_at = {now} WHERE id = {id}", ct);
+    }
+
+    public async Task<IReadOnlyList<IntentInfo>> OpenIntentsAsync(string? operationId, CancellationToken ct)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        const string cols = "SELECT id AS Id, operation_id AS OperationId, service AS Service, action AS Action, from_image AS FromImage, to_image AS ToImage, container_ids_before AS ContainerIdsBefore FROM intents WHERE completed_at IS NULL";
+        var rows = operationId is null
+            ? await db.Database.SqlQueryRaw<IntentSqlRow>(cols + " ORDER BY id").ToListAsync(ct)
+            : await db.Database.SqlQueryRaw<IntentSqlRow>(cols + " AND operation_id = {0} ORDER BY id", operationId).ToListAsync(ct);
+        return [.. rows.Select(r => new IntentInfo(r.Id, r.OperationId, r.Service, r.Action, r.FromImage, r.ToImage, JsonSerializer.Deserialize<List<string>>(r.ContainerIdsBefore, MaintenanceJson.Options) ?? []))];
     }
 
     public async Task<RunDetail?> GetAsync(string id, CancellationToken ct)
@@ -405,5 +593,17 @@ internal sealed class HttpProbeVerifier : IProbeVerifier
             throw Application.Errors.AppException.BadRequest(
                 $"The probe could not be reached from Quaymaster ({why}). It must be reachable from Quaymaster's network (publish a port or attach Quaymaster to the network).");
         }
+    }
+}
+
+/// <summary>The health gate's HTTP probe: GET without following redirects (5 s), resolves to the status code.</summary>
+internal sealed class HttpStatusProbe : IHttpProbe
+{
+    public async Task<int> StatusAsync(string url, CancellationToken ct)
+    {
+        using var handler = new HttpClientHandler { AllowAutoRedirect = false };
+        using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(5) };
+        using var res = await client.GetAsync(new Uri(url), HttpCompletionOption.ResponseHeadersRead, ct);
+        return (int)res.StatusCode;
     }
 }

@@ -88,12 +88,63 @@ public sealed record NewRun(
     Plan? Plan,
     string RequestedBy,
     JsonObject Options,
-    long CreatedAt);
+    long CreatedAt,
+    string? ScheduleId = null,
+    long? OccurrenceUtc = null,
+    string? WindowId = null,
+    long? ApprovalExpiresAt = null);
 
-/// <summary>T4a: insert + read of the <c>runs</c> table. T4b extends it (status transitions, steps, listing).</summary>
+/// <summary>The raw (epoch ms) columns the wire <see cref="RunInfo"/> flattens to ISO strings, plus the stored options.</summary>
+public sealed record RunMeta(JsonObject Options, long? ApprovalExpiresAt, long? StartedAt, long? WindowEndUtc, string? WindowId, string? ScheduleId);
+
+/// <summary>A write-ahead intent to be persisted BEFORE a side-effecting sub-step (RT-14).</summary>
+public sealed record NewIntent(string OperationId, string? Service, string Action, string? FromImage, string? ToImage, IReadOnlyList<string> ContainerIdsBefore);
+
+/// <summary>The <c>runs</c>, <c>run_steps</c> and <c>intents</c> tables.</summary>
 public interface IRunStore
 {
     Task InsertAsync(NewRun run, CancellationToken ct);
 
     Task<RunDetail?> GetAsync(string id, CancellationToken ct);
+
+    Task<RunMeta?> GetMetaAsync(string id, CancellationToken ct);
+
+    /// <summary>Newest first.</summary>
+    Task<IReadOnlyList<RunInfo>> ListAsync(int limit, string? status, string? target, CancellationToken ct);
+
+    /// <summary>A run that is currently <c>running</c>, if any.</summary>
+    Task<RunInfo?> RunningAsync(CancellationToken ct);
+
+    /// <summary>Compare-and-set <c>awaiting_approval → approved</c>. False when the run is no longer awaiting approval.</summary>
+    Task<bool> ApproveAsync(string id, string by, string planHash, long now, CancellationToken ct);
+
+    /// <summary>Compare-and-set <c>approved → running</c>. False when the run was not approved.</summary>
+    Task<bool> MarkRunningAsync(string id, long now, CancellationToken ct);
+
+    Task SetWindowEndAsync(string id, long windowEndUtc, CancellationToken ct);
+
+    /// <summary>Sets the final status.</summary>
+    Task FinishAsync(string id, string status, RunResult? result, IReadOnlyList<string>? guidance, string? reason, long now, CancellationToken ct);
+
+    /// <summary>Overdue approvals become <c>skipped</c> ("approval expired"). Returns them.</summary>
+    Task<IReadOnlyList<RunInfo>> ExpireApprovalsAsync(long now, CancellationToken ct);
+
+    /// <summary>Startup: <c>running</c> → <c>interrupted</c> (never resumed). Returns the runs that were running.</summary>
+    Task<IReadOnlyList<RunInfo>> InterruptRunningAsync(long now, CancellationToken ct);
+
+    /// <summary>Startup: <c>approved</c> but never started → <c>interrupted</c> (never run later on a stale approval).</summary>
+    Task<int> InterruptApprovedAsync(long now, CancellationToken ct);
+
+    Task<int> StartStepAsync(string runId, int seq, string? service, string stepName, long now, CancellationToken ct);
+
+    Task FinishStepAsync(int stepId, string status, JsonObject? detail, long now, CancellationToken ct);
+
+    Task FailOpenStepsAsync(string runId, long now, CancellationToken ct);
+
+    Task<long> AddIntentAsync(NewIntent intent, long now, CancellationToken ct);
+
+    Task CompleteIntentAsync(long id, long now, CancellationToken ct);
+
+    /// <summary>Open (not completed) intents, of one run or of all of them.</summary>
+    Task<IReadOnlyList<IntentInfo>> OpenIntentsAsync(string? operationId, CancellationToken ct);
 }

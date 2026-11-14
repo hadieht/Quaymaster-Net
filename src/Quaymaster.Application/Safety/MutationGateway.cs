@@ -64,7 +64,8 @@ public sealed class MutationGateway(
     DockerBootstrap bootstrap,
     IDockerCommands commands,
     IComposeCli compose,
-    IAuditLog audit) : IMutationGateway
+    IAuditLog audit,
+    IMaintenanceGate? maintenance = null) : IMutationGateway
 {
     private static readonly System.Text.Json.JsonSerializerOptions ParamOptions = new(System.Text.Json.JsonSerializerDefaults.Web)
     {
@@ -115,6 +116,7 @@ public sealed class MutationGateway(
         ArgumentNullException.ThrowIfNull(container);
         ArgumentNullException.ThrowIfNull(command);
         await AssertContainerAsync(container, ct);
+        maintenance?.Assert(container.Project);
         if (!Domain.Docker.DockerNames.IsFullId(command.ContainerId) || command.ContainerId != container.Id)
         {
             throw new AppException(500, ErrorCode.Internal, "Engine mutation requires the full id of the checked container");
@@ -203,6 +205,7 @@ public sealed class MutationGateway(
         {
             await bootstrap.EnsureReadyAsync(ct);
             AssertComposeSubcommand(sub);
+            maintenance?.Assert(argv.FirstOrDefault(a => a.StartsWith("--project-name=", StringComparison.Ordinal))?["--project-name=".Length..]);
         }
 
         return await compose.RunAsync(argv, options ?? new ComposeRunOptions(), ct);

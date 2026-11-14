@@ -204,6 +204,12 @@ internal sealed class RollbackStore(IDbContextFactory<AppDbContext> factory) : I
         await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE rollback_points SET released = 1 WHERE tag = {tag}", ct);
     }
 
+    public async Task<IReadOnlyList<RollbackPoint>> ForRunAsync(string runId, CancellationToken ct)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        return [.. (await db.Database.SqlQueryRaw<RollbackRow>(Columns + " WHERE run_id = {0} ORDER BY created_at, tag", runId).ToListAsync(ct)).Select(Map)];
+    }
+
     public async Task<IReadOnlyList<RollbackPoint>> ListAsync(int limit, CancellationToken ct)
     {
         await using var db = await factory.CreateDbContextAsync(ct);

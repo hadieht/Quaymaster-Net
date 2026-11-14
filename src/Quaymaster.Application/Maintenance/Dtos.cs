@@ -95,3 +95,22 @@ public sealed record RunDetailDto(
             i.StartedAt, i.FinishedAt, d.Plan, d.Steps);
     }
 }
+
+/// <summary>Body of <c>POST /maintenance/runs</c>.</summary>
+public sealed record RunBody(
+    string? Project,
+    IReadOnlyList<string>? Services,
+    bool? ApplyDrift,
+    bool? AllowUnhealthy,
+    bool? StartNow,
+    string? Confirm,
+    string? WindowId,
+    bool? IgnoreWindow);
+
+public sealed record ApproveBody(string? PlanHash);
+
+public sealed record RestoreBody(string? Confirm, IReadOnlyList<string>? Services);
+
+public sealed record RunListDto(IReadOnlyList<RunInfo> Runs);
+
+public sealed record OperationStartedDto(string OperationId);

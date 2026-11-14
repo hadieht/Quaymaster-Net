@@ -124,3 +124,37 @@ public sealed class PlanBodyValidator : AbstractValidator<PlanBody>
         this.StringList(x => x.Services, "services", 100, 100);
     }
 }
+
+public sealed class RunBodyValidator : AbstractValidator<RunBody>
+{
+    public RunBodyValidator()
+    {
+        this.RequireString(x => x.Project, "project", 1, 100);
+        this.StringList(x => x.Services, "services", 100, 100);
+        RuleFor(x => x.Confirm).MaximumLength(200).WithMessage("String must contain at most 200 character(s)").OverridePropertyName("confirm");
+        RuleFor(x => x.WindowId).Must(s => s is null || MaintenanceValidation.UuidRe().IsMatch(s)).WithMessage("Invalid uuid").OverridePropertyName("windowId");
+    }
+}
+
+public sealed partial class ApproveBodyValidator : AbstractValidator<ApproveBody>
+{
+    public ApproveBodyValidator()
+    {
+        RuleFor(x => x.PlanHash).Cascade(CascadeMode.Stop)
+            .NotNull().WithMessage("Required")
+            .Must(s => PlanHashRe().IsMatch(s!)).WithMessage("Invalid")
+            .OverridePropertyName("planHash");
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex("^[0-9a-f]{64}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant)]
+    private static partial System.Text.RegularExpressions.Regex PlanHashRe();
+}
+
+public sealed class RestoreBodyValidator : AbstractValidator<RestoreBody>
+{
+    public RestoreBodyValidator()
+    {
+        RuleFor(x => x.Confirm).MaximumLength(200).WithMessage("String must contain at most 200 character(s)").OverridePropertyName("confirm");
+        this.StringList(x => x.Services, "services", 100, 100);
+    }
+}
