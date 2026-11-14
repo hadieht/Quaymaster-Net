@@ -14,6 +14,7 @@
     <PackageReference Include="xunit.runner.visualstudio" />
       <PackageReference Include="FluentAssertions" />
     <PackageReference Include="NSubstitute" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
   </ItemGroup>
 
   <ItemGroup>
@@ -23,6 +24,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Quaymaster.Domain\Quaymaster.Domain.csproj" />
     <ProjectReference Include="..\..\src\Quaymaster.Application\Quaymaster.Application.csproj" />
+    <ProjectReference Include="..\..\src\Quaymaster.Infrastructure\Quaymaster.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>
