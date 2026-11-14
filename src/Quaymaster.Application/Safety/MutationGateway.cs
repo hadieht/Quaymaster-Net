@@ -43,6 +43,18 @@ public interface IMutationGateway
     /// <summary>Engine lifecycle call on one container, by full id. Returns false when it was already in that state.</summary>
     Task<bool> ExecuteContainerAsync(ContainerRef container, ContainerCommand command, CancellationToken ct);
 
+    /// <summary>Pulls <c>repository@digest</c> (read-only mode refuses). Only digests are ever pulled.</summary>
+    Task PullImageAsync(ImagePull request, IProgress<PullProgress>? progress, CancellationToken ct);
+
+    Task TagImageAsync(string imageId, string repo, string tag, CancellationToken ct);
+
+    Task RemoveImageAsync(string nameOrId, CancellationToken ct);
+
+    /// <summary>Removes a volume: read-only mode, managed scope and Quaymaster's own volumes are enforced here too.</summary>
+    Task RemoveVolumeAsync(string name, CancellationToken ct);
+
+    Task RemoveNetworkAsync(string id, string name, CancellationToken ct);
+
     /// <summary>Runs <c>docker compose</c> with a built argv; the subcommand allow-list and read-only mode are enforced here.</summary>
     Task<ComposeRunResult> RunComposeAsync(IReadOnlyList<string> argv, ComposeRunOptions? options, CancellationToken ct);
 }
@@ -109,6 +121,71 @@ public sealed class MutationGateway(
         }
 
         return await commands.ExecuteAsync(command, ct);
+    }
+
+    private async Task EnsureWritableAsync(CancellationToken ct)
+    {
+        await bootstrap.EnsureReadyAsync(ct);
+        if (policy.ReadOnlyReason is { } ro)
+        {
+            throw new AppException(409, ErrorCode.ReadOnly, $"Read-only mode: {ro}");
+        }
+    }
+
+    public async Task PullImageAsync(ImagePull request, IProgress<PullProgress>? progress, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (!Domain.Registry.ImageReferences.IsDigest(request.Digest))
+        {
+            throw new AppException(500, ErrorCode.Internal, "Only digest-pinned pulls are permitted");
+        }
+
+        await EnsureWritableAsync(ct);
+        await commands.PullImageAsync(request, progress, ct);
+    }
+
+    public async Task TagImageAsync(string imageId, string repo, string tag, CancellationToken ct)
+    {
+        await EnsureWritableAsync(ct);
+        await commands.TagImageAsync(imageId, repo, tag, ct);
+    }
+
+    public async Task RemoveImageAsync(string nameOrId, CancellationToken ct)
+    {
+        await EnsureWritableAsync(ct);
+        await commands.RemoveImageAsync(nameOrId, ct);
+    }
+
+    public async Task RemoveVolumeAsync(string name, CancellationToken ct)
+    {
+        await EnsureWritableAsync(ct);
+        if (policy.VolumeProtectedReason(name) is { } self)
+        {
+            throw new AppException(409, ErrorCode.SelfProtected, $"Refused: volume {name} is {self}");
+        }
+
+        if (!policy.InScope(name))
+        {
+            throw new AppException(409, ErrorCode.OutOfScope, $"Refused: volume \"{name}\" is outside QM_MANAGED_SCOPE");
+        }
+
+        await commands.RemoveVolumeAsync(name, ct);
+    }
+
+    public async Task RemoveNetworkAsync(string id, string name, CancellationToken ct)
+    {
+        await EnsureWritableAsync(ct);
+        if (policy.NetworkProtectedReason(name) is { } self)
+        {
+            throw new AppException(409, ErrorCode.SelfProtected, $"Refused: network {name} is {self}");
+        }
+
+        if (!policy.InScope(name))
+        {
+            throw new AppException(409, ErrorCode.OutOfScope, $"Refused: network \"{name}\" is outside QM_MANAGED_SCOPE");
+        }
+
+        await commands.RemoveNetworkAsync(id, ct);
     }
 
     public async Task<ComposeRunResult> RunComposeAsync(IReadOnlyList<string> argv, ComposeRunOptions? options, CancellationToken ct)

@@ -106,6 +106,7 @@ var api = app.MapGroup("/api/v1");
 AuthEndpoints.Map(api);
 UsersEndpoints.Map(api);
 DockerEndpoints.Map(api);
+UpdateEndpoints.Map(api);
 MiscEndpoints.Map(api);
 StreamEndpoints.Map(api);
 SiteEndpoints.Map(app, webDir);

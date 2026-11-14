@@ -31,6 +31,12 @@ public interface IComposeService
     /// <summary>Starts a Compose action as a background operation and returns its id.</summary>
     Task<string> OperateAsync(string name, string action, ComposeActionRequest request, Actor actor, CancellationToken ct);
 
+    /// <summary>
+    /// The unredacted resolved configuration of a full-capability project, for safety computations only (which images, volumes
+    /// and networks a project owns). Never returned to a client. Throws when the project does not resolve.
+    /// </summary>
+    Task<JsonObject> ResolvedConfigForSafetyAsync(string name, CancellationToken ct);
+
     void Invalidate();
 }
 
@@ -161,6 +167,9 @@ public sealed partial class ComposeService(
         new(409, ErrorCode.LimitedCapability, message, new { level = s.Level, reasons = s.Reasons, reasonDetails = s.ReasonDetails, mountHint = s.MountHint });
 
     // ---- resolved configuration -----------------------------------------------------------------------------------
+
+    public async Task<JsonObject> ResolvedConfigForSafetyAsync(string name, CancellationToken ct) =>
+        (await ResolvedConfigAsync(name, false, ct)).Config;
 
     /// <summary>Runs <c>compose config --format json</c> (cached briefly). The raw result stays in memory; only redacted views leave.</summary>
     private async Task<CachedConfig> ResolvedConfigAsync(string name, bool fresh, CancellationToken ct)

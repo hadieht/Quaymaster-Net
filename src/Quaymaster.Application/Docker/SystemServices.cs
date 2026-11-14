@@ -37,6 +37,9 @@ public interface ISystemService
     Task<JsonNode?> InfoAsync(CancellationToken ct);
 
     Task<HostMetricsDto> HostAsync(CancellationToken ct);
+
+    /// <summary>Total and free bytes of the filesystem holding the Docker root; null when unknown. Cheap (no CPU sampling).</summary>
+    Task<HostRootDto?> DockerRootSpaceAsync(CancellationToken ct);
 }
 
 public interface IEventStreamStatus
@@ -179,6 +182,25 @@ public sealed class SystemService(
 
         var load = host.LoadAverage();
         return new HostMetricsDto(cpuPercent, [load[0], load[1], load[2]], memTotal, memAvailable, host.UptimeSeconds(), dockerRoot, dockerRootError);
+    }
+
+    public async Task<HostRootDto?> DockerRootSpaceAsync(CancellationToken ct)
+    {
+        var root = config.DockerRootMount ?? await DockerRootDirAsync(ct);
+        if (root is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var (total, free) = host.Statfs(root);
+            return new HostRootDto(root, total, free);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
     }
 
     public async Task<string?> DockerRootDirAsync(CancellationToken ct)

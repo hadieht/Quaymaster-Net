@@ -8,6 +8,9 @@ using Quaymaster.Application.Docker;
 using Quaymaster.Application.Events;
 using Quaymaster.Application.Monitoring;
 using Quaymaster.Application.Operations;
+using Quaymaster.Application.Registry;
+using Quaymaster.Application.Storage;
+using Quaymaster.Application.Updates;
 using Quaymaster.Application.Safety;
 using Quaymaster.Application.Stats;
 using Quaymaster.Application.Streaming;
@@ -79,6 +82,25 @@ public static class DockerDependencyInjection
         services.AddSingleton<IEventStreamStatus>(sp => sp.GetRequiredService<EventWatcher>());
         services.AddSingleton<ISystemService, SystemService>();
         services.AddSingleton<INotificationSink, AuditNotificationSink>();
+
+        // updates, image / volume / network removal, storage cleanup, registry credentials (T3)
+        services.AddSingleton<ISecretBox>(_ => new Quaymaster.Infrastructure.Security.SecretBox(config.SecretKey.Bytes));
+        services.AddSingleton<IImageChecksStore, ImageChecksStore>();
+        services.AddSingleton<IStagedStore, StagedStore>();
+        services.AddSingleton<IRollbackStore, RollbackStore>();
+        services.AddSingleton<IQuarantineStore, QuarantineStore>();
+        services.AddSingleton<IRegistryCredentialStore, RegistryCredentialStore>();
+        services.AddSingleton<IRegistryClient>(sp => Quaymaster.Infrastructure.Registry.RegistryClientFactory.Create(config, sp.GetRequiredService<IRegistryCredentialStore>(), sp.GetRequiredService<TimeProvider>()));
+        services.AddSingleton<IQuarantineService, QuarantineService>();
+        services.AddSingleton<IImageOps, ImageOps>();
+        services.AddSingleton<IUpdateService, UpdateService>();
+        services.AddSingleton<IPullService, PullService>();
+        services.AddSingleton<IRegistryCredentialService, RegistryCredentialService>();
+        services.AddSingleton<IDfMeasurer, DfMeasurer>();
+        services.AddSingleton<IReclaimMeasurer, ReclaimMeasurer>();
+        services.AddSingleton<IComposeOwnershipProvider, ComposeOwnershipProvider>();
+        services.AddSingleton<IImageCleanupService, ImageCleanupService>();
+        services.AddSingleton<IStorageCleanupService, StorageCleanupService>();
 
         // background collectors
         services.AddSingleton<EventWatcher>();

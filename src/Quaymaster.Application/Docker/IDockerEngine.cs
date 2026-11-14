@@ -55,6 +55,12 @@ public interface IDockerEngine
     /// <summary>One stats sample, or null when the container vanished.</summary>
     Task<RawStats?> StatsOnceAsync(string containerId, CancellationToken ct);
 
+    /// <summary>
+    /// <c>GET /distribution/{name}/json</c>: the digest the registry serves for <paramref name="name"/> (<c>repo:tag</c>), asked through the
+    /// daemon with the daemon's own credentials. Null when the daemon cannot tell. Read-only.
+    /// </summary>
+    Task<string?> DistributionDigestAsync(string name, CancellationToken ct);
+
     /// <summary>Long-lived <c>/events</c> stream (container/image/volume/network). Ends when the daemon closes it.</summary>
     IAsyncEnumerable<JsonObject> EventsAsync(DateTimeOffset since, CancellationToken ct);
 }
@@ -78,6 +84,26 @@ public sealed record ContainerCommand(string ContainerId, ContainerAction Action
 /// </summary>
 public interface IDockerCommands
 {
+    /// <summary>Pulls <c>repository@digest</c> (never a moving tag). Throws <c>registry_error</c> when the pull fails.</summary>
+    Task PullImageAsync(ImagePull request, IProgress<PullProgress>? progress, CancellationToken ct);
+
+    /// <summary>Adds <c>repo:tag</c> to an image. Never removes anything.</summary>
+    Task TagImageAsync(string imageId, string repo, string tag, CancellationToken ct);
+
+    /// <summary>Removes a tag (or the image when given an id). Never forced: Docker refuses an image a container uses (409).</summary>
+    Task RemoveImageAsync(string nameOrId, CancellationToken ct);
+
+    /// <summary>Never forced.</summary>
+    Task RemoveVolumeAsync(string name, CancellationToken ct);
+
+    Task RemoveNetworkAsync(string id, CancellationToken ct);
+
     /// <summary>Returns false when the container was already in the requested state (HTTP 304).</summary>
     Task<bool> ExecuteAsync(ContainerCommand command, CancellationToken ct);
 }
+
+public sealed record ImagePull(string Repository, string Digest, RegistryAuth? Auth);
+
+public sealed record RegistryAuth(string Username, string Password, string ServerAddress);
+
+public sealed record PullProgress(string? Status, string? Id, string? Progress);

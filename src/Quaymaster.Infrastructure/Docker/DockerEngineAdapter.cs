@@ -406,6 +406,143 @@ internal sealed class DockerEngineAdapter : IDockerEngine, IDockerCommands, IDis
         }
     }
 
+    // ---- image / volume / network mutations (gateway only) --------------------------------------------------------------
+
+    public async Task<string?> DistributionDigestAsync(string name, CancellationToken ct)
+    {
+        var path = string.Join('/', name.Split('/').Select(s => Uri.EscapeDataString(s).Replace("%3A", ":", StringComparison.Ordinal).Replace("%40", "@", StringComparison.Ordinal)));
+        var node = await GetAsync($"/distribution/{path}/json", ct, TimeSpan.FromSeconds(30)) as JsonObject;
+        return node?.Obj("Descriptor")?.Str("digest");
+    }
+
+    private sealed class SyncProgress<T>(Action<T> handler) : IProgress<T>
+    {
+        public void Report(T value) => handler(value);
+    }
+
+    public async Task PullImageAsync(ImagePull request, IProgress<Quaymaster.Application.Docker.PullProgress>? progress, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var client = await ClientAsync(ct);
+        var auth = request.Auth is null ? null : new AuthConfig { Username = request.Auth.Username, Password = request.Auth.Password, ServerAddress = request.Auth.ServerAddress };
+        string? failure = null;
+        var sink = new SyncProgress<JSONMessage>(m =>
+        {
+            if (!string.IsNullOrEmpty(m.Error?.Message))
+            {
+                failure ??= m.Error.Message;
+            }
+
+            progress?.Report(new Quaymaster.Application.Docker.PullProgress(m.Status, m.ID, m.Progress?.Current is { } cur && m.Progress.Total > 0 ? $"{cur}/{m.Progress.Total}" : null));
+        });
+        try
+        {
+            // fromImage=<repo>&tag=<sha256:...>: the Engine resolves the digest, so a moving tag is never pulled
+            await client.Images.CreateImageAsync(new ImagesCreateParameters { FromImage = request.Repository, Tag = request.Digest }, auth, sink, ct);
+        }
+        catch (DockerApiException e)
+        {
+            throw new AppException(502, ErrorCode.RegistryError, $"Docker could not pull the image: {e.Message}");
+        }
+        catch (Exception e) when (e is not AppException && DockerHttp.IsTransport(e, ct))
+        {
+            throw DockerHttp.Unavailable(e);
+        }
+
+        if (failure is not null)
+        {
+            throw new AppException(502, ErrorCode.RegistryError, failure);
+        }
+    }
+
+    public async Task TagImageAsync(string imageId, string repo, string tag, CancellationToken ct)
+    {
+        var client = await ClientAsync(ct);
+        try
+        {
+            await client.Images.TagImageAsync(imageId, new ImageTagParameters { RepositoryName = repo, Tag = tag }, ct);
+        }
+        catch (DockerImageNotFoundException)
+        {
+            throw AppException.NotFound("Image");
+        }
+        catch (DockerApiException e)
+        {
+            throw MapApi(e);
+        }
+        catch (Exception e) when (e is not AppException && DockerHttp.IsTransport(e, ct))
+        {
+            throw DockerHttp.Unavailable(e);
+        }
+    }
+
+    public async Task RemoveImageAsync(string nameOrId, CancellationToken ct)
+    {
+        var client = await ClientAsync(ct);
+        try
+        {
+            // never forced: Docker refuses to delete an image a container uses (409)
+            await client.Images.DeleteImageAsync(nameOrId, new ImageDeleteParameters { Force = false, NoPrune = false }, ct);
+        }
+        catch (DockerImageNotFoundException)
+        {
+            throw AppException.NotFound("Image");
+        }
+        catch (DockerApiException e)
+        {
+            throw MapApi(e);
+        }
+        catch (Exception e) when (e is not AppException && DockerHttp.IsTransport(e, ct))
+        {
+            throw DockerHttp.Unavailable(e);
+        }
+    }
+
+    public async Task RemoveVolumeAsync(string name, CancellationToken ct)
+    {
+        var client = await ClientAsync(ct);
+        try
+        {
+            await client.Volumes.RemoveAsync(name, force: false, ct);
+        }
+        catch (DockerApiException e) when (e.StatusCode == HttpStatusCode.NotFound)
+        {
+            throw AppException.NotFound("Volume");
+        }
+        catch (DockerApiException e)
+        {
+            throw MapApi(e);
+        }
+        catch (Exception e) when (e is not AppException && DockerHttp.IsTransport(e, ct))
+        {
+            throw DockerHttp.Unavailable(e);
+        }
+    }
+
+    public async Task RemoveNetworkAsync(string id, CancellationToken ct)
+    {
+        var client = await ClientAsync(ct);
+        try
+        {
+            await client.Networks.DeleteNetworkAsync(id, ct);
+        }
+        catch (DockerApiException e) when (e.StatusCode == HttpStatusCode.NotFound)
+        {
+            throw AppException.NotFound("Network");
+        }
+        catch (DockerApiException e)
+        {
+            throw MapApi(e);
+        }
+        catch (Exception e) when (e is not AppException && DockerHttp.IsTransport(e, ct))
+        {
+            throw DockerHttp.Unavailable(e);
+        }
+    }
+
+    private static AppException MapApi(DockerApiException e) =>
+        e.StatusCode == HttpStatusCode.Conflict ? AppException.Conflict(e.Message) : new AppException(502, ErrorCode.Internal, $"Docker error: {e.Message}");
+
     public void Dispose()
     {
         _client?.Dispose();
