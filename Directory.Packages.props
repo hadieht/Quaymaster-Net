@@ -24,5 +24,7 @@
     <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.5.0" />
     <!-- T2: Docker Engine client (maintained fork of Docker.DotNet; same Docker.DotNet namespace) -->
     <PackageVersion Include="Docker.DotNet.Enhanced" Version="4.4.1" />
+    <!-- T4: cron expressions (DST-aware next-occurrence arithmetic) -->
+    <PackageVersion Include="Cronos" Version="0.11.1" />
   </ItemGroup>
 </Project>
