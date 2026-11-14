@@ -132,3 +132,81 @@ SSE `GET /stream/events|stats|logs/:ref|operations/:id`.
 
 **Known gaps for T3–T5**: read-only file helper (`compose/helper.ts`) not ported → limited projects have `fileAccess:"none"`; maintenance gate (`assertNotUnderMaintenance`) not wired; monitors cover container/host alerts only (update/maintenance monitors + real notification delivery = T5; default sink writes `monitor.alert` audit rows with an in-memory cool-down);
 stats history/ring buffer are in-memory + rollups; SSE `/stream/maintenance` is T4; image/volume/network removal & prune, registry, updates = later phases.
+
+## T3 — updates engine, image/volume/network removal, storage cleanup, registry credentials (forge, 2026-11-14) — **COMPLETE**
+
+**Status**: every T3 endpoint is implemented, covered by fake-backed integration tests and exercised live against the real daemon and
+Docker Hub (`LiveStorageTests`, throwaway resources only). `dotnet build --no-incremental` = 0 warnings / 0 errors, `npm run build` green.
+
+**Endpoints** (`/api/v1`; "admin" = `Capability.Write`, viewers get 403, no session 401):
+`GET /updates` · `POST /updates/check` (admin) · `GET /updates/quarantine` · `POST /updates/quarantine/clear` (admin) ·
+`POST /images/pull` (admin, **202** `{operationId}`) · `GET /images/staged` · `POST /images/:ref/remove` (admin) ·
+`POST /images/cleanup/preview|execute` (admin) · `POST /volumes/:name/remove` (admin) · `POST /networks/:ref/remove` (admin) ·
+`POST /storage/cleanup/preview|execute` (admin) · `GET|PUT /registries/credentials` (admin, the read too — as in the original) ·
+`DELETE /registries/credentials/:host` (admin). `/ignored*` already existed (T2); update detection reads containers through
+`ContainerService.ListRawAsync`, which applies the ignore list, so ignored targets are skipped.
+
+**Layout** — Domain: `Registry/ImageReferences` (parse, registry host resolution, cache key, staged/rollback tags), `Updates/UpdateClassifier`
+(the six-state digest machine) + records, `Storage/{ReclaimMath, StorageRules, ImageCleanupRules}` (pure decisions: reclaim arithmetic,
+volume/network eligibility, image candidate selection by age/label/category/scope/retention). Application: `Registry/` (IRegistryClient,
+ISecretBox), `Updates/` (UpdateService, PullService, ImageOps, QuarantineService, RegistryCredentialService, store interfaces, DTOs),
+`Storage/` (ImageCleanupService, StorageCleanupService, PreviewStore), `Docker/Reclaim.cs` (DfMeasurer, ReclaimMeasurer,
+ComposeOwnershipProvider). Infrastructure: `Registry/RegistryClient` (HttpClient), `Security/SecretBox` (AES-GCM), `Persistence/Repositories/UpdateStores.cs`,
+adapter additions in `DockerEngineAdapter`. Api: `Endpoints/UpdateEndpoints.cs`.
+
+**Decisions**
+- **One gateway, extended**: `IDockerCommands` gained `PullImageAsync/TagImageAsync/RemoveImageAsync/RemoveVolumeAsync/RemoveNetworkAsync`;
+  `IMutationGateway` wraps each (read-only → `read_only`; volume/network also re-check self-protection + managed scope; pull refuses anything
+  but a `sha256:` digest). Nothing else may touch `IDockerCommands` (architecture test still green). Deletes are never forced; `RemoveVolume` never `force`.
+- **Pull is by digest only** (`fromImage=repo&tag=sha256:…`), then tagged `quaymaster-staged/<hash12>:<digest12>`; the user's tag is added only when it
+  does not exist locally. Free-space preflight (2.5× compressed size + max(QM_DISK_FLOOR_BYTES, 10 % of the root)) and a 1.5 s floor watchdog that
+  cancels the pull (→ 507 `insufficient_disk`). Credentials come from the store (looked up by API host then by registry), sent as `X-Registry-Auth`.
+- **Registry client** = port of `registry/client.ts`: HEAD with Accept for index+manifest types, 401 challenge → bearer token (cached per host|repo)
+  or basic; credentials only to the registry or an allow-listed realm (built-ins + `QM_REGISTRY_TOKEN_REALMS`), never over plain http except
+  loopback / `QM_REGISTRY_INSECURE`; per-host serialisation, 250 ms spacing + jitter, `Retry-After` retries (2) then host back-off; redirects never
+  followed; missing digest header → GET and hash the body. Failures are cached ≤ 5 min, successes `QM_CHECK_TTL_MINUTES`; the daemon's
+  `/distribution/{name}/json` is the fallback (source `engine`).
+- **SecretBox is wire-compatible with the original** (HKDF-SHA256 salt `quaymaster` / info `secrets-v1`, AAD `secret_store:ciphertext:<name>`,
+  `v1.<keyId>.<iv>.<tag>.<ct>` base64url) — a unit test decrypts a ciphertext produced by the Node implementation, so an existing DB's credentials keep working.
+  Passwords are never returned (`GET` = host, username, updatedAt), never audited, and the DB file contains only ciphertext (integration test greps the file).
+- **Previews** are in memory (10 min, one use, bound to the admin who made them; a restart invalidates them). Image cleanup: `confirm == previewId`.
+  Storage cleanup: `confirm == confirmPhrase ?? previewId`, phrase = `delete N volume(s)`. Every candidate is re-verified at execute time
+  (in use by ANY container incl. invisible ones, recreated volume, kind change, new tags, scope, rollback, Compose naming).
+- **Reclaim** = `{estimatedBytes, freeSpaceDeltaBytes, dfDeltaBytes, reclaimedBytes, basis: df|statfs|estimate, note, caveat}` from a fresh df + statfs
+  before/after, capped at what the removed items occupied (RT3-06); untagging and "nothing removed" report 0. Live: a 2 MB volume reported
+  df Δ 2 000 000 / statfs Δ 1 998 848.
+- **Compose ownership** for the "named by a project" / "project volume" rules comes from the resolved config of every discovered project (including
+  ignored ones) via the new `IComposeService.ResolvedConfigForSafetyAsync` (raw config, never returned to a client).
+- **Untagged images and expired internal tags under a managed scope** are kept unless a `labelFilter` is given (original rule) — note that the default
+  harness scope `*` therefore protects dangling images; integration tests for cleanup run with an empty scope.
+- Error codes as in the original: confirmation mismatch 409 `confirmation_required` (+ `details.expected`), no/expired preview 409 `conflict`,
+  other admin's preview 403 `forbidden`, in-use / Compose-owned 409 `conflict` (+ `details.requires:"acknowledgeComposeProject"` for volumes),
+  scope 409 `out_of_scope`, own volumes/networks 409 `self_protected`, read-only 409 `read_only`. `POST /images/pull` with out-of-scope ref = 403 `out_of_scope` (as the original).
+- Preview endpoints are admin-only and allowed in read-only mode (they change nothing); `/updates/check` and quarantine clear are allowed in read-only mode too.
+
+**Docker.DotNet.Enhanced 4.4.1 gaps**: none blocking. `JSONMessage` has no `ProgressMessage`; progress is rebuilt from `Progress.Current/Total`; pull errors
+arrive as `JSONMessage.Error` in the stream (not an exception), so the adapter collects the first one and throws `registry_error`. `Progress<T>` posts
+asynchronously, so a synchronous `IProgress<T>` is used to see the error before `CreateImageAsync` returns. `/distribution/*/json` is read through the raw GET client.
+
+**Tests (T3)**: unit **101 new → 317** (reference parsing, six-state machine, quarantine, reclaim math, cleanup/storage rules, SecretBox incl. Node vector,
+RegistryClient: challenge dance, realm allow-list, http/https rules, 429/back-off, throttle, error kinds) · integration **+90 → 211 non-live** (`UpdatesApiTests`,
+`RegistryCredentialsApiTests`, `ImagePullApiTests`, `ImageRemovalApiTests`, `ImageCleanupApiTests`, `StorageCleanupApiTests`; `FakeDocker` now has a mutable image/volume/network world + `FakeRegistry`) ·
+live **+3** (`LiveStorageTests`, `[Trait("Category","Live")]`: pull alpine by digest → staged → user's tag unmoved → untag; throwaway image untag/delete cycle with measured reclaim;
+anonymous-volume preview+execute + single volume + network removal, QM_MANAGED_SCOPE pinned to the throwaway names; all cleaned up, host volume/image/network lists identical before/after).
+CI without Docker: `dotnet test --filter "Category!=Live"`.
+
+**What T4 (maintenance/rollback) must know**
+- `IRollbackStore` (put/get/active/release/list) and `IStagedStore` exist; rollback tags: `ImageReferences.RollbackTag(project, service, runId)`; retention `QM_ROLLBACK_RETENTION_DAYS` = `config.RollbackRetention`.
+  Cleanup already protects active rollback points (by tag and by image id) and expired ones are removed via the `expired_rollback` category.
+- `IQuarantineService.AddAsync(target, digest, runId, reason)` is the hook for failed unattended runs; `UpdateService` flags `quarantined` on the status.
+  `target` = `ImageReferences.CacheKey(ref)` (`docker.io/library/nginx:1.27`).
+- Deploy = use `IImageOps` + gateway (`TagImageAsync` moves the user's tag); `PullService.StartAsync` is the standalone pull; maintenance should call `IImageOps.PullByDigestAsync` directly.
+- The maintenance gate (`assertNotUnderMaintenance`) is still not wired into the new mutations (also not into T2's); the hook point is `MutationGateway.EnsureWritableAsync`.
+- Image/volume/network removal invalidate the container cache only; T4's inventory caches (compose, df) are not invalidated by removals (df is re-measured per reclaim anyway).
+
+**Known gaps for T4/T5**
+- No periodic update check yet (T5 monitors: "update available" alerts + scheduled checks); `/updates` only checks on demand / TTL.
+- `compose` projects' image refs are read from the resolved config only for `level: full` projects; limited projects protect only through their running containers' images.
+- Pulls of private registries with credentials under a *different* host alias (e.g. `index.docker.io`) are not matched; use `registry-1.docker.io` for Docker Hub.
+- Preview state is process-local (single instance by design).
+- `DELETE /registries/credentials/:host` returns `{ok:true}` as the original; PUT echoes the host as typed but stores it lower-case.
