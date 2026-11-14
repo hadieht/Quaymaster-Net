@@ -18,6 +18,9 @@ public static partial class OutboundPolicy
     public const int MaxResponseBytes = 64 * 1024;
     public const int MaxRedirects = 3;
 
+    [GeneratedRegex(@"^[A-Za-z][A-Za-z0-9+.-]*:")]
+    private static partial Regex SchemeStart();
+
     [GeneratedRegex(@"^\d{1,3}$")]
     private static partial Regex Octet();
 
@@ -117,7 +120,8 @@ public static partial class OutboundPolicy
     public static Uri Validate(string url)
     {
         ArgumentNullException.ThrowIfNull(url);
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var u))
+        // a bare "/path" is an absolute FILE uri on Unix; WHATWG `new URL("/path")` throws -> "Invalid URL"
+        if (!SchemeStart().IsMatch(url) || !Uri.TryCreate(url, UriKind.Absolute, out var u))
         {
             throw new OutboundPolicyException("Invalid URL");
         }

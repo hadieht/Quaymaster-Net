@@ -123,7 +123,7 @@ internal sealed partial class ConfigReader
             return null;
         }
 
-        var d = v.GetValue<double>();
+        var d = double.Parse(v.ToJsonString(), System.Globalization.CultureInfo.InvariantCulture);
         if (d != Math.Floor(d))
         {
             Issues.Add(new ConfigIssue(path, "Expected integer, received float"));
