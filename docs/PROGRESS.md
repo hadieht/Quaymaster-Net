@@ -189,7 +189,7 @@ arrive as `JSONMessage.Error` in the stream (not an exception), so the adapter c
 asynchronously, so a synchronous `IProgress<T>` is used to see the error before `CreateImageAsync` returns. `/distribution/*/json` is read through the raw GET client.
 
 **Tests (T3)**: unit **101 new → 317** (reference parsing, six-state machine, quarantine, reclaim math, cleanup/storage rules, SecretBox incl. Node vector,
-RegistryClient: challenge dance, realm allow-list, http/https rules, 429/back-off, throttle, error kinds) · integration **+90 → 211 non-live** (`UpdatesApiTests`,
+RegistryClient: challenge dance, realm allow-list, http/https rules, 429/back-off, throttle, error kinds) · integration **+86 → 207 non-live, 212 with the 5 live tests** (`UpdatesApiTests`,
 `RegistryCredentialsApiTests`, `ImagePullApiTests`, `ImageRemovalApiTests`, `ImageCleanupApiTests`, `StorageCleanupApiTests`; `FakeDocker` now has a mutable image/volume/network world + `FakeRegistry`) ·
 live **+3** (`LiveStorageTests`, `[Trait("Category","Live")]`: pull alpine by digest → staged → user's tag unmoved → untag; throwaway image untag/delete cycle with measured reclaim;
 anonymous-volume preview+execute + single volume + network removal, QM_MANAGED_SCOPE pinned to the throwaway names; all cleaned up, host volume/image/network lists identical before/after).
