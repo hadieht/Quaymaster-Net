@@ -30,7 +30,7 @@ public interface IStandaloneService
     Task<string> StartAsync(StandaloneRequest request, Actor actor, CancellationToken ct);
 
     /// <summary>Runs the clone sequence for an already recorded run. Returns the final run status.</summary>
-    Task<string> ExecuteAsync(string runId, StandalonePrepared prepared, string requestedBy, IOperationContext ctx, CancellationToken ct);
+    Task<string> ExecuteAsync(string runId, StandalonePrepared p, string requestedBy, IOperationContext ctx, CancellationToken ct);
 }
 
 /// <summary>

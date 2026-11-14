@@ -14,6 +14,8 @@ namespace Quaymaster.Api.Endpoints;
 /// </summary>
 public static class MaintenanceEndpoints
 {
+    private static readonly System.Text.Json.JsonSerializerOptions WebJson = new(System.Text.Json.JsonSerializerDefaults.Web);
+
     public static void Map(RouteGroupBuilder api)
     {
         ArgumentNullException.ThrowIfNull(api);
@@ -127,7 +129,7 @@ public static class MaintenanceEndpoints
         {
             var b = await StrictJsonBody.ReadAsync(http, validator);
             var runId = await standalone.StartAsync(new StandaloneRequest(b.Container!, b.Confirm), http.ActorOf(), http.RequestAborted);
-            var run = System.Text.Json.JsonSerializer.SerializeToNode(await runs.GetAsync(runId, http.RequestAborted), new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web))!.AsObject();
+            var run = System.Text.Json.JsonSerializer.SerializeToNode(await runs.GetAsync(runId, http.RequestAborted), WebJson)!.AsObject();
             run["runId"] = runId;
             return Results.Json(run, statusCode: StatusCodes.Status202Accepted);
         });
