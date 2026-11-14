@@ -15,6 +15,7 @@ namespace Quaymaster.IntegrationTests;
 /// <c>finally</c>. Excluded with <c>--filter "Category!=Live"</c>; without a reachable daemon it passes vacuously.
 /// </summary>
 [Trait("Category", "Live")]
+[Collection("LiveFixtureRegistry")]
 public sealed class LiveMaintenanceRunTests(ITestOutputHelper output) : IDisposable
 {
     private const string Socket = "/var/run/docker.sock";
@@ -102,6 +103,79 @@ public sealed class LiveMaintenanceRunTests(ITestOutputHelper output) : IDisposa
         }
 
         throw new TimeoutException("operation did not finish");
+    }
+
+    [Fact]
+    public async Task Standalone_config_clone_update_against_the_real_daemon()
+    {
+        if (!DaemonReachable())
+        {
+            output.WriteLine("no Docker daemon: skipped");
+            return;
+        }
+
+        try
+        {
+            output.WriteLine(Fixture("registry-up.sh"));
+            output.WriteLine(Fixture("publish.sh", "app", "1", "good"));
+            Run("docker", "pull", "--quiet", "127.0.0.1:5055/qmtest-app:latest").Code.Should().Be(0);
+            Run("docker", "volume", "create", "--label", "quaymaster.test=true", "qmtest-solo-data").Code.Should().Be(0);
+            Run("docker", "run", "-d", "--name", "qmtest-solo", "--label", "quaymaster.test=true", "--restart", "unless-stopped", "-v", "qmtest-solo-data:/data", "-e", "FOO=bar", "127.0.0.1:5055/qmtest-app:latest").Code.Should().Be(0);
+            for (var i = 0; i < 60 && Run("docker", "inspect", "--format", "{{.State.Health.Status}}", "qmtest-solo").Out != "healthy"; i++)
+            {
+                await Task.Delay(500);
+            }
+
+            var oldImage = Run("docker", "inspect", "--format", "{{.Image}}", "qmtest-solo").Out;
+            output.WriteLine(Fixture("publish.sh", "app", "2", "good"));
+
+            QmFactory? factory = null;
+            factory = _factory = new QmFactory(
+                new Dictionary<string, string>
+                {
+                    ["QM_MANAGED_SCOPE"] = "qmtest-*",
+                    ["QM_READ_ONLY"] = "false",
+                    ["QM_DOCKER_SOCKET"] = Socket,
+                    ["QM_STACK_PATHS"] = Path.Combine(RepoRoot(), "test-fixtures", "stacks"),
+                },
+                services => services.AddSingleton(new HealthTimings
+                {
+                    PollMs = 1000,
+                    Sleep = async (ms, ct) =>
+                    {
+                        await Task.Delay(ms, ct);
+                        factory!.Time.Advance(TimeSpan.FromMilliseconds(ms));
+                    },
+                }));
+            factory.Time.SetUtcNow(DateTimeOffset.UtcNow);
+            var admin = await factory.NewAdminAsync();
+
+            var started = await admin.PostAsync("/maintenance/standalone", new { container = "qmtest-solo", confirm = "qmtest-solo" });
+            started.Status.Should().Be(202, started.Body);
+            var done = await WaitRunAsync(admin, started.Json.GetProperty("runId").GetString()!);
+            output.WriteLine(done.ToString());
+            done.GetProperty("status").GetString().Should().Be("completed", done.GetProperty("reason").ToString());
+
+            var newImage = Run("docker", "inspect", "--format", "{{.Image}}", "qmtest-solo").Out;
+            newImage.Should().NotBe(oldImage);
+            Run("docker", "inspect", "--format", "{{.State.Running}} {{.HostConfig.RestartPolicy.Name}} {{json .Config.Env}} {{range .Mounts}}{{.Name}}:{{.Destination}} {{end}}", "qmtest-solo").Out
+                .Should().Contain("true unless-stopped").And.Contain("FOO=bar").And.Contain("qmtest-solo-data:/data");
+            var kept = Run("docker", "ps", "-a", "--filter", "name=qmtest-solo-qm-old-", "--format", "{{.Names}}").Out;
+            kept.Should().StartWith("qmtest-solo-qm-old-");
+            Run("docker", "inspect", "--format", "{{.State.Running}} {{.HostConfig.RestartPolicy.Name}} {{.Image}}", kept.Split('\n')[0]).Out
+                .Should().Be($"false no {oldImage}", "the previous container is kept stopped, with its restart policy off, on the old image");
+        }
+        finally
+        {
+            foreach (var name in Run("docker", "ps", "-aq", "--filter", "label=quaymaster.test=true", "--filter", "name=qmtest-solo").Out.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            {
+                Run("docker", "rm", "-f", name);
+            }
+
+            Run("docker", "volume", "rm", "qmtest-solo-data");
+            output.WriteLine(Fixture("upd-down.sh"));
+            output.WriteLine(Fixture("registry-down.sh"));
+        }
     }
 
     [Fact]

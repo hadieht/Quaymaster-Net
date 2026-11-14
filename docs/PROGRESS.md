@@ -297,3 +297,64 @@ critical target with auto policy still waits (non-critical runs unattended); res
 
 **Hooks for T4c**: `IRunService.CreateAsync(request, actor, ScheduledRun)` for the scheduler; `ExpireApprovalsAsync` for periodic expiry; `RunHooks.OnStep` is a test-only crash/timing seam; notification wiring should consume the event types above.
 **Known limits**: HTTP health probe and real `RunEnvironment.UpAsync` have no unit coverage (T4c live fixture run exercises them).
+
+---
+
+## T4c — standalone update, maintenance monitors, maintenance streams, live verification (forge, 2026-11-14) — **COMPLETE**
+
+**Endpoints (new)**: `POST /maintenance/standalone {container, confirm}` → **202**, body = the run (`RunDetail`, flattened) **plus `runId`** (admin; 400 validation, 401/403,
+404 unknown container, 409 `confirmation_required` (+`details.expected`) / `read_only` / `unsupported` (Compose-managed, `container:` network mode, `--rm`) / `conflict` (nothing to update,
+policy `ignore`, another run active) / `out_of_scope`). `GET /stream/maintenance` (SSE: `snapshot` once per recent run, oldest first, then `run` on every status/step change, polled every 2 s;
+final `end {reason}`) and `GET /stream/maintenance/runs/:id` (live output of a run: `output {text}`, `status {status,error}`, `end`; a run id **is** its operation id, so
+`/stream/operations/:id` works too; 404 for an unknown run, a finished run whose operation record is gone answers with its final `status`).
+
+**Gateway surface completed** (`IMutationGateway`, the only user of `IDockerCommands`; the T2 in-flight branch had nothing, so it was re-implemented): `CreateCloneAsync`, `ConnectCloneNetworkAsync`,
+`RenameContainerAsync`, `SetRestartPolicyAsync`, `ExecuteOnCloneAsync`. They all authorise on the **original** container's ref (never on the temporary clone name), enforce read-only / scope /
+self-protection / maintenance gate, require full ids. Adapter: `DockerHttp.PostJsonAsync` (create / network connect / rename / update; Engine JSON passes through unchanged). "Probe" =
+`HealthGate.WaitAsync` on the clone id (healthcheck → `healthy`, else stability, + the policy's HTTP probe).
+
+**Standalone** (`Application/Maintenance/StandaloneExecutor`, `Domain/Maintenance/CloneSpecBuilder`): recovery point (old image id tagged `quaymaster-rollback/standalone…`) → pull by digest →
+tag moves → clone created stopped (only env/cmd/labels… that differ from the old image are carried; every mount re-attached by volume name; first user network at create, the rest connected
+before start) → old container stopped, restart policy → `no`, renamed `<name>-qm-old-<epoch s>`, clone renamed → start → health gate. Any failure: clone stopped/renamed aside/removed, old renamed
+back, policy restored, started, tag moved back (`rolled_back` on health failure, else `failed`; undo failure → `guidance` + `service.left_down`). Same run store, steps, audit and notification
+events as compose runs (`run.succeeded|rolled_back|failed`). **No `/restore` for standalone runs** (409 "restored by hand": the old container is kept; the run's `reason` has the exact commands).
+
+**Monitors** (`Application/Monitoring/MaintenanceMonitor`, `IMonitorEvaluator.TickAsync`, background task, 60 s): per tick — approvals past `QM_APPROVAL_EXPIRY_HOURS` → `run.skipped`; **scheduler**
+(cron cursor moves *before* firing = at-most-once; `Domain/Maintenance/ScheduleTick` decides Fire/SkipMissed(>5 min, unless the latest one of an update job with an open window)/SkipWindow;
+`update` → `IRunService.CreateAsync(..., ScheduledRun)`, `image_check` → `updates.available`, `cleanup_report` → `cleanup.report`; `image_pull` is consumed but **not executed**);
+`maintenance.upcoming` (within `upcomingMaintenanceMinutes`); `updates.available` (daily, marker in `kv` `monitor.updates.lastCheck`); `host.disk_low` when the Docker root is below `QM_DISK_FLOOR_BYTES`.
+Container died / unhealthy / OOM / restart loop / CPU / memory stay in `Monitors` (event driven; restart-loop counting now `Domain/Maintenance/RestartLoop`). **De-dup/cool-down lives in the
+outbound abstraction** (`INotificationSink`: in-memory per `DedupeKey` + `CooldownMs`; the monitor deliberately re-emits every tick). `GET|PUT /monitors/settings` drive the loop (`enabled=false` stops announcements, schedules still fire).
+
+### Event contract for T5 (`NotificationEvent(Type, Severity, Title, Message, DedupeKey, CooldownMs?, Data?)`)
+| Type | Severity | DedupeKey | CooldownMs | Data |
+|---|---|---|---|---|
+| `maintenance.upcoming` | info | `upcoming:<scheduleId>:<occurrenceMs>` | 86 400 000 | `schedule, scheduleId, mode, target, at(ISO)` |
+| `maintenance.awaiting_approval` | info | `approval:<runId>` | – | `run, planHash` |
+| `run.succeeded` / `run.rolled_back` / `run.partial` / `run.skipped` / `run.failed` (also blocked/interrupted-by-executor) | info / warning / warning / info / critical | `run:<runId>` | – | `run, target, status` (`guidance` appended to message on failure) |
+| `run.skipped` (approval expired) | info | `expired:<runId>` | – | `run, target, status` |
+| `run.skipped` (scheduled update, window closed) | info | `skipped:<scheduleId>:<occurrenceMs>` | – | `schedule, reason:"window_closed"` |
+| `run.failed` (scheduled update blocked) | warning | `blocked:<project>:<code>` | 86 400 000 | – |
+| `run.interrupted` / `service.left_down` (startup recovery, auto-rollback off, failed undo) | warning / critical | see T4b | – | `run, target, services[]` |
+| `run.conflict` | warning | see T4b | – | – |
+| `updates.available` | info | `updates:<sorted ref@digest list, ≤300 chars>` | 86 400 000 | `count, images[]` |
+| `cleanup.report` | info | `cleanup:<yyyy-MM-dd>` | – | `candidates, totalBytes, protected` |
+| `host.disk_low` | warning/critical | `disk-low` | 21 600 000 | `freeBytes, freePercent` / `floorBytes` |
+| `container.died` / `container.unhealthy` / `container.restart_loop` / `host.cpu_high` / `host.memory_high` | per T2 | per T2 | per T2 | `container, …` |
+Wire source of truth: `INotificationSink.Notify`; T5 replaces `AuditNotificationSink` (default: audit `monitor.alert` with the in-memory cool-down).
+
+**Tests**: unit **+23 → 502** (`T4cTests.cs`: clone spec; the full standalone sequence order CreateClone→ConnectCloneNetwork→stop→SetRestartPolicy→Rename×2→ExecuteOnClone(start)→Probe; rollback sequence on
+failed health; pull failure touches nothing; prepare refusals; scheduler decisions + window gating; restart-loop window; monitor events + dedupe keys; sink cool-down; approval expiry via `RunService`) ·
+integration **+7 → 251 non-live** (`StandaloneAndStreamTests`: standalone contract/auth/validation/errors/read-only, full accepted run on the fake world, `/stream/maintenance` connect → snapshot →
+`run` → heartbeat → `end` on logout, run output stream replay, monitor loop with a capturing sink: `updates.available`, `maintenance.awaiting_approval`, `run.skipped` on expiry) · **live +2** (`LiveMaintenanceRunTests`,
+`[Trait("Category","Live")]`, `[Collection("LiveFixtureRegistry")]` shared with `LiveMaintenanceTests` so fixture-registry users never run in parallel).
+
+**Live evidence (real daemon, `qmtest-upd`, scope `qmtest-*`)**: dry-run plan → create (awaiting_approval, same plan hash) → approve → run `completed` with all steps `succeeded`
+(preflight, validate, check, recovery_point, pull, impact, deploy [real `docker compose up --no-deps --pull never`], health, dependents, record) → `app` runs a **different image id** (`sha256:a836f68e…`) → restore (confirm
+= project) → operation `succeeded` → `app` runs the **original image id** again; the container ids of every other stack on the host are identical before/after; fixture removed. Standalone: `qmtest-solo`
+(restart `unless-stopped`, named volume, env) updated by config clone → new image, restart policy/env/volume carried, `qmtest-solo-qm-old-<ts>` kept stopped with restart `no` on the old image; cleaned up.
+
+**Gaps for T6**: `image_pull` schedules are accepted but not executed; no standalone restore endpoint (guidance only, old `-qm-old-*` containers are not auto-pruned after the rollback retention);
+`GET /stream/maintenance` is polled (2 s) not pushed; monitor cool-down state is process-local (lost on restart — a restart re-announces `updates.available` at most once, the daily marker is in `kv`);
+real channel delivery (T5) still missing; `docs/API.md` should document `POST /maintenance/standalone` (response carries `runId` in addition to the flat run) and the two new streams; the web UI
+does not use `/stream/maintenance` yet; `Fresh` plan generation for scheduled runs still refreshes the whole host (see T4a limits).
