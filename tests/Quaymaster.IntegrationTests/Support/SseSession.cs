@@ -3,7 +3,7 @@ using System.Text.Json;
 
 namespace Quaymaster.IntegrationTests.Support;
 
-public sealed record SseFrame(string Event, string Data)
+public sealed record SseMessage(string Event, string Data)
 {
     public JsonElement Json => JsonDocument.Parse(Data).RootElement;
 }
@@ -43,7 +43,7 @@ public sealed class SseSession : IAsyncDisposable
     public async Task<string> ReadBodyAsync() => await _response.Content.ReadAsStringAsync();
 
     /// <summary>Next non-comment frame, or null when the stream ended.</summary>
-    public async Task<SseFrame?> NextAsync()
+    public async Task<SseMessage?> NextAsync()
     {
         string? name = null;
         var data = new StringBuilder();
@@ -59,7 +59,7 @@ public sealed class SseSession : IAsyncDisposable
             {
                 if (name is not null || data.Length > 0)
                 {
-                    return new SseFrame(name ?? "message", data.ToString());
+                    return new SseMessage(name ?? "message", data.ToString());
                 }
 
                 continue;
@@ -81,7 +81,7 @@ public sealed class SseSession : IAsyncDisposable
         }
     }
 
-    public async Task<SseFrame> NextOfAsync(string eventName)
+    public async Task<SseMessage> NextOfAsync(string eventName)
     {
         while (await NextAsync() is { } frame)
         {
