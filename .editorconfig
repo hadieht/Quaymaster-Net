@@ -46,6 +46,9 @@ dotnet_diagnostic.CS8618.severity = warning
 dotnet_diagnostic.CS1591.severity = none
 dotnet_diagnostic.IDE0059.severity = warning
 dotnet_diagnostic.CA1707.severity = none
+# Process-lifetime singletons own their SemaphoreSlim; small constant arrays in cold paths are fine.
+dotnet_diagnostic.CA1001.severity = suggestion
+dotnet_diagnostic.CA1861.severity = suggestion
 
 [*.{ts,tsx,js,jsx,json,css,html}]
 indent_size = 2

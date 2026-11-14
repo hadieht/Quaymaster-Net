@@ -8,6 +8,7 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
     <PackageReference Include="BouncyCastle.Cryptography" />
+    <PackageReference Include="Docker.DotNet.Enhanced" />
     <!-- design-time only: `dotnet ef migrations add` (tool pinned in dotnet-tools.json) -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
       <PrivateAssets>all</PrivateAssets>

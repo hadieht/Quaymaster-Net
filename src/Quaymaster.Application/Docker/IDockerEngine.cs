@@ -1,0 +1,83 @@
+using System.Text.Json.Nodes;
+using Quaymaster.Domain.Stats;
+
+namespace Quaymaster.Application.Docker;
+
+/// <param name="Version">Engine version (29.x).</param>
+/// <param name="DaemonApiVersion">Highest API version the daemon speaks.</param>
+/// <param name="MinApiVersion">Lowest API version the daemon still accepts.</param>
+/// <param name="NegotiatedApiVersion">What Quaymaster uses: min(daemon, tested maximum).</param>
+public sealed record EngineVersion(string Version, string DaemonApiVersion, string? MinApiVersion, string NegotiatedApiVersion);
+
+/// <summary>One demultiplexed chunk of a container log stream.</summary>
+public sealed record LogFrame(bool Stderr, ReadOnlyMemory<byte> Data);
+
+public sealed record LogRequest(bool Follow, int? Tail, long? Since, bool Timestamps);
+
+/// <summary>
+/// Read side of the Docker Engine API. Everything returns the Engine's own JSON (PascalCase) so inspect-style endpoints
+/// pass the daemon's shape through unchanged (after redaction). Mutations are NOT here: see <see cref="IDockerCommands"/>.
+/// Implementations map transport failures to <c>docker_unavailable</c> and unknown resources to <c>not_found</c>.
+/// </summary>
+public interface IDockerEngine
+{
+    Task<EngineVersion> GetVersionAsync(CancellationToken ct);
+
+    Task PingAsync(CancellationToken ct);
+
+    /// <summary>All containers (<c>GET /containers/json?all=1</c>).</summary>
+    Task<JsonArray> ListContainersAsync(CancellationToken ct);
+
+    /// <summary>Inspect by id, id prefix or name. Null when the daemon says 404.</summary>
+    Task<JsonObject?> InspectContainerAsync(string idOrName, CancellationToken ct);
+
+    Task<JsonObject> InfoAsync(CancellationToken ct);
+
+    Task<JsonArray> ListImagesAsync(CancellationToken ct);
+
+    Task<JsonObject?> InspectImageAsync(string reference, CancellationToken ct);
+
+    /// <summary><c>{"Volumes":[...],"Warnings":...}</c> as the daemon returns it.</summary>
+    Task<JsonObject> ListVolumesAsync(CancellationToken ct);
+
+    Task<JsonObject?> InspectVolumeAsync(string name, CancellationToken ct);
+
+    Task<JsonArray> ListNetworksAsync(CancellationToken ct);
+
+    Task<JsonObject?> InspectNetworkAsync(string reference, CancellationToken ct);
+
+    /// <summary><c>GET /system/df?type=</c> (one type per request: the unfiltered call can take minutes).</summary>
+    Task<JsonObject> DiskUsageAsync(string type, CancellationToken ct);
+
+    /// <summary>Container logs. For a TTY container everything arrives as stdout.</summary>
+    IAsyncEnumerable<LogFrame> LogsAsync(string containerId, bool tty, LogRequest request, CancellationToken ct);
+
+    /// <summary>One stats sample, or null when the container vanished.</summary>
+    Task<RawStats?> StatsOnceAsync(string containerId, CancellationToken ct);
+
+    /// <summary>Long-lived <c>/events</c> stream (container/image/volume/network). Ends when the daemon closes it.</summary>
+    IAsyncEnumerable<JsonObject> EventsAsync(DateTimeOffset since, CancellationToken ct);
+}
+
+public enum ContainerAction
+{
+    Start,
+    Stop,
+    Restart,
+    Kill,
+    Pause,
+    Unpause,
+    Remove,
+}
+
+public sealed record ContainerCommand(string ContainerId, ContainerAction Action, int? TimeoutSeconds = null, string? Signal = null);
+
+/// <summary>
+/// Engine mutations. Only <c>MutationGateway</c> may depend on this interface (enforced by an architecture test):
+/// it refuses anything but a full 64-hex id, never forces and never removes volumes.
+/// </summary>
+public interface IDockerCommands
+{
+    /// <summary>Returns false when the container was already in the requested state (HTTP 304).</summary>
+    Task<bool> ExecuteAsync(ContainerCommand command, CancellationToken ct);
+}
