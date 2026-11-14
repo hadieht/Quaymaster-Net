@@ -358,3 +358,59 @@ integration **+7 → 251 non-live** (`StandaloneAndStreamTests`: standalone cont
 `GET /stream/maintenance` is polled (2 s) not pushed; monitor cool-down state is process-local (lost on restart — a restart re-announces `updates.available` at most once, the daily marker is in `kv`);
 real channel delivery (T5) still missing; `docs/API.md` should document `POST /maintenance/standalone` (response carries `runId` in addition to the flat run) and the two new streams; the web UI
 does not use `/stream/maintenance` yet; `Fresh` plan generation for scheduled runs still refreshes the whole host (see T4a limits).
+
+## T5 — notifications: 7 channels, de-dupe, retries, outbound dispatcher (forge, 2026-11-14) — **COMPLETE**
+
+**Endpoints** (`/api/v1`): `GET /notifications/types` · `GET|POST /notifications/channels` · `GET|PATCH|DELETE /notifications/channels/:id` · `POST /notifications/channels/:id/test` · `GET /notifications/deliveries`
+
+**Channel kinds & wire options**
+
+| kind     | required config                      | optional config                                  | masked in API |
+|----------|--------------------------------------|--------------------------------------------------|---------------|
+| webhook  | url                                  | secret, headers                                  | url, secret, headers |
+| ntfy     | serverUrl, topic                     | token                                            | serverUrl, token |
+| gotify   | serverUrl, appToken                  | —                                                | serverUrl, appToken |
+| discord  | url                                  | —                                                | url |
+| slack    | url                                  | —                                                | url |
+| telegram | botToken, chatId                     | apiBase                                          | botToken |
+| smtp     | host, port, from, to                 | secure, username, password                       | password |
+
+Per-channel: `enabled`, `events[]` (event types this channel receives; `[*]` = all), `minSeverity` (info|warning|critical).
+
+**Behaviour (port of original outbound.ts, channel.ts, service.ts)**
+
+- Outbound policy: http/https only, no userinfo, unspecified/link-local/multicast/broadcast IPs refused (cloud metadata), loopback/RFC1918 allowed (home self-hosted), max 3 redirects to **same host**, 307/308 keep method+body, others become GET; TLS required unless plain `http://` used; 5 s timeout, 64 KiB response cap.
+- Webhook HMAC: `X-Quaymaster-Signature: sha256=<HMAC-SHA256(body)>`, timestamp header `X-Quaymaster-Timestamp`.
+- Ntfy priority 3/4/5, tags `information_source|warning|rotating_light,<event.type>`.
+- Gotify priority 3/5/8, `X-Gotify-Key`.
+- Discord/Slack/Telegram/SMTP templates identical to original (byte-for-byte for JSON payloads).
+- De-dupe: persisted in `notification_dedupe` keyed by `channelId|dedupeKey` (default `type:title`), cooldown 15 min default, 5 min for critical.
+- Delivery log in `notification_deliveries` with statuses pending|sent|failed|suppressed|dead.
+- Retries: backoff 30s, 2m, 10m, 30m, 2h (±20 % jitter), max 5 attempts.
+- Dead deliveries raise ONE critical `app.error` to **other** channels (never back to the failing one, never for `app.error` or `test` events — no loops).
+- Secrets encrypted at rest via T3's `ISecretBox` (AES-GCM under `QM_SECRET_KEY`), never returned (masked like registry credentials).
+- Channel CRUD audited; outbound failures audited as `app.error`.
+- Monitors (T4) now emit through `INotificationSink` → real deliveries (replacing `AuditNotificationSink`).
+
+**Tests (all green)**
+
+- Unit: 146 tests — channel config validation (all 7 kinds, boundaries, SSRF/URL policy table), rendering snapshot vs. original channels/*.ts, outbound policy (IPv4/IPv6 rules, redirect logic), delivery rules (cooldown, backoff, jitter).
+- Integration (faked transport): 17 tests — full pipeline event→channels→render→send→delivery log; retries on 500; HMAC verification; test endpoint; cooldown suppression; dead-letter self-monitor; delivery query filters; audit masking.
+- Live (`[Trait("Category","Live")]`): 18 tests — real HTTP/SMTP on 127.0.0.1 via `RawHttpReceiver` + `FakeSmtpServer`. Wire-format assertions: webhook headers & HMAC byte-for-byte, ntfy headers, gotify/telegram/discord/slack JSON, redirect 307/308 vs 301/302/303 semantics, host policy enforcement, connection failures & timeouts never leak URLs, response cap, SMTP dialogue + AUTH, blocked link-local hosts.
+
+**Verification**
+
+```
+dotnet build --no-incremental          0 warnings / 0 errors
+dotnet test                            648 unit + 288 integration + 18 live = 954 passed
+npm run build                          green
+```
+
+**Decisions & known gaps for T6**
+
+- The raw `INotificationSink` replacement means monitors now use the real dispatcher; `AuditNotificationSink` is retained (unit tests depend on it) but no longer registered in DI.
+- Image pull schedules (`image_pull` cron) are accepted but not executed (gap from T4c).
+- No standalone restore endpoint (`-qm-old-*` containers kept after rollback; no prune job yet).
+- `GET /stream/maintenance` still polled at 2 s; monitor cool-down is process-local (lost on restart, at most one re-announce of `updates.available` per restart; daily marker in `kv`).
+- `docs/API.md` does not yet document the new notification endpoints or streams.
+- Web UI does not yet use `/stream/maintenance` (gap from T4c).
