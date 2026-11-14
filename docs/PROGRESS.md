@@ -274,3 +274,26 @@ Totals: **397 unit + 233 integration, 0 failed**; `dotnet build --no-incremental
 **Known limits**: no `GET /maintenance/runs*` yet (T4b); a dry run stores its plan but exposes it only in the POST response; plan generation calls `StatusesAsync(fresh:true)`
 for the whole host (acceptable for a manual dry run, T4b scheduled planning should pass `Fresh=false` where the cache is enough); policy keys are decoded with
 `Uri.UnescapeDataString` (a literal `%` in a container name key must be sent as `%25`).
+
+---
+
+## T4b — run lifecycle (executor, approval, rollback, restore)
+
+**Built** (Application/Maintenance: `RunService`, `RunExecutor` (+`.Deploy`), `HealthGate`, `RunEnvironment`, `RunRecoveryService`; Domain `RunRules`; Infrastructure `MaintenanceStores.cs` extended with the run store, steps, rollback points, quarantine; Api `MaintenanceEndpoints.cs`).
+
+**Endpoints**: `POST /maintenance/runs`, `GET /maintenance/runs[?status&target&limit]`, `GET /maintenance/runs/:id`, `POST /maintenance/runs/:id/approve {planHash}`,
+`POST /maintenance/runs/:id/reject`, `POST /maintenance/runs/:id/restore {confirm, services?}` → 202 `{operationId}`.
+
+**Behaviour**: approval bound to the plan hash (`approval_stale` 409 when the plan changed, a fresh request is created); expiry via `QM_APPROVAL_EXPIRY_HOURS` (default 72), applied on list/get and `IRunService.ExpireApprovalsAsync`;
+unattended only when policy auto + schedule auto + no approval + not critical; 10 persisted steps (preflight, validate, check, recovery point, pull by digest, impact, deploy one service at a time deps-first with image-ID assertion, health, confirm/rollback, record);
+auto-rollback OFF for writable persistent mounts (service left down, `service.left_down`); startup recovery marks in-flight runs `interrupted` with exact recovery commands (never resumed); overlapping runs serialised/declined (`run.conflict`).
+
+**Event types for T5**: `maintenance.upcoming` (T4c scheduler emits), `maintenance.awaiting_approval`, `run.succeeded`, `run.failed`, `run.rolled_back`, `run.partial`, `run.skipped`, `run.interrupted`, `run.conflict`, `service.left_down`, `updates.available`, `cleanup.report` (the last three plus `maintenance.upcoming` are defined for T4c/T5 and not yet emitted).
+
+**Tests**: 479 unit, 244 integration (11 new in `RunLifecycleApiTests`), all green; `dotnet build --no-incremental` 0 warnings; `npm run build` green.
+Failure scenarios: create→approve→execute with persisted steps and recovery point; start-now confirmation + read-only refusal; pull failure → abort with zero impact; restarting service → blocked at preflight;
+health failure → rollback, recovery point re-tagged, old image running; tag moved after approval → approval_stale; crash mid-run → interrupted + commands, not resumed; overlapping runs serialised/declined;
+critical target with auto policy still waits (non-critical runs unattended); restore after confirm; approval expiry and reject.
+
+**Hooks for T4c**: `IRunService.CreateAsync(request, actor, ScheduledRun)` for the scheduler; `ExpireApprovalsAsync` for periodic expiry; `RunHooks.OnStep` is a test-only crash/timing seam; notification wiring should consume the event types above.
+**Known limits**: HTTP health probe and real `RunEnvironment.UpAsync` have no unit coverage (T4c live fixture run exercises them).
