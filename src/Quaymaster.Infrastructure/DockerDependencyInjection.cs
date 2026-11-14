@@ -126,6 +126,7 @@ public static class DockerDependencyInjection
         services.AddSingleton<IRunService, RunService>();
         services.AddSingleton<IRunRecoveryService, RunRecoveryService>();
         services.AddSingleton<IStandaloneService, StandaloneExecutor>();
+        services.AddSingleton<Application.Streaming.IMaintenanceStreamFeed, Application.Streaming.MaintenanceStreamFeed>();
 
         // background collectors
         services.AddSingleton<EventWatcher>();
@@ -134,6 +135,9 @@ public static class DockerDependencyInjection
         services.AddSingleton<IStatsSampler>(sp => sp.GetRequiredService<StatsSampler>());
         services.AddSingleton<IQMBackgroundTask>(sp => sp.GetRequiredService<StatsSampler>());
         services.AddSingleton<Monitors>();
+        services.AddSingleton<MaintenanceMonitor>();
+        services.AddSingleton<IMonitorEvaluator>(sp => sp.GetRequiredService<MaintenanceMonitor>());
+        services.AddSingleton<IQMBackgroundTask>(sp => sp.GetRequiredService<MaintenanceMonitor>());
         services.AddSingleton<IMonitorSettingsService>(sp => sp.GetRequiredService<Monitors>());
         services.AddSingleton<IQMBackgroundTask>(sp => sp.GetRequiredService<Monitors>());
         services.AddSingleton<IQMBackgroundTask, RetentionTask>();

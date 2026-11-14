@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Mvc;
 using Quaymaster.Api.Http;
 using Quaymaster.Application.Docker;
 using Quaymaster.Application.Errors;
@@ -23,7 +24,7 @@ public static class StreamEndpoints
         ArgumentNullException.ThrowIfNull(api);
         var logs = api.MapGroup(string.Empty).RequireCapability(Capability.Logs);
 
-        api.MapGet("/stream/events", async (HttpContext http, ISseHub hub, IEventQueries events, Application.Streaming.Broadcaster<DockerEventRecord> feed) =>
+        api.MapGet("/stream/events", async (HttpContext http, [FromServices] ISseHub hub, [FromServices] IEventQueries events, [FromServices] Application.Streaming.Broadcaster<DockerEventRecord> feed) =>
         {
             var q = new QueryReader(k => http.Request.Query[k].FirstOrDefault());
             var sinceId = q.Number64InRange("sinceId", 0, long.MaxValue);
@@ -43,7 +44,7 @@ public static class StreamEndpoints
             return new SseResult(conn);
         });
 
-        api.MapGet("/stream/stats", (HttpContext http, ISseHub hub, IStatsSampler stats, Application.Streaming.Broadcaster<StatsSampleEvent> feed) =>
+        api.MapGet("/stream/stats", (HttpContext http, [FromServices] ISseHub hub, [FromServices] IStatsSampler stats, [FromServices] Application.Streaming.Broadcaster<StatsSampleEvent> feed) =>
         {
             var conn = hub.Open(http.RequireAuth());
             conn.Send("snapshot", stats.Latest());
@@ -52,7 +53,7 @@ public static class StreamEndpoints
             return new SseResult(conn);
         });
 
-        logs.MapGet("/stream/logs/{reference}", async (HttpContext http, string reference, ISseHub hub, IContainerService containers) =>
+        logs.MapGet("/stream/logs/{reference}", async (HttpContext http, string reference, [FromServices] ISseHub hub, [FromServices] IContainerService containers) =>
         {
             var q = new QueryReader(k => http.Request.Query[k].FirstOrDefault());
             var tail = q.NumberInRange("tail", 0, 2000, 100) ?? 100;
@@ -89,7 +90,7 @@ public static class StreamEndpoints
             return new SseResult(conn);
         });
 
-        api.MapGet("/stream/operations/{id}", async (HttpContext http, string id, ISseHub hub, IOperationManager operations) =>
+        api.MapGet("/stream/operations/{id}", async (HttpContext http, string id, [FromServices] ISseHub hub, [FromServices] IOperationManager operations) =>
         {
             if (await operations.GetAsync(id, http.RequestAborted) is null)
             {
@@ -126,7 +127,7 @@ public static class StreamEndpoints
         });
 
         // Run progress: `snapshot` (one per recent run, oldest first), then `run` whenever a run changes (polled every 2 s).
-        api.MapGet("/stream/maintenance", async (HttpContext http, ISseHub hub, Application.Streaming.IMaintenanceStreamFeed feed) =>
+        api.MapGet("/stream/maintenance", async (HttpContext http, [FromServices] ISseHub hub, [FromServices] Application.Streaming.IMaintenanceStreamFeed feed) =>
         {
             var conn = hub.Open(http.RequireAuth());
             await feed.AttachAsync(conn, http.RequestAborted);
@@ -135,7 +136,7 @@ public static class StreamEndpoints
 
         // Live output of one run. A run id is also its operation id, so this is /stream/operations/:id with the run checked first;
         // a run whose operation record is gone (older than the operation history, or from before a restart) answers with its final status.
-        api.MapGet("/stream/maintenance/runs/{id}", async (HttpContext http, string id, ISseHub hub, IOperationManager operations, Application.Maintenance.IRunService runs) =>
+        api.MapGet("/stream/maintenance/runs/{id}", async (HttpContext http, string id, [FromServices] ISseHub hub, [FromServices] IOperationManager operations, [FromServices] Application.Maintenance.IRunService runs) =>
         {
             var run = await runs.GetAsync(id, http.RequestAborted);
             var conn = hub.Open(http.RequireAuth());

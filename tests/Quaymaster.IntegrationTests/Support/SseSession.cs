@@ -81,6 +81,20 @@ public sealed class SseSession : IAsyncDisposable
         }
     }
 
+    /// <summary>Waits for a comment line (<c>: text</c>) such as the <c>ping</c> heartbeat; null when the stream ended first.</summary>
+    public async Task<string?> NextCommentAsync(string text)
+    {
+        while (await _reader.ReadLineAsync(_cts.Token) is { } line)
+        {
+            if (line.StartsWith(':') && line[1..].Trim() == text)
+            {
+                return line;
+            }
+        }
+
+        return null;
+    }
+
     public async Task<SseMessage> NextOfAsync(string eventName)
     {
         while (await NextAsync() is { } frame)

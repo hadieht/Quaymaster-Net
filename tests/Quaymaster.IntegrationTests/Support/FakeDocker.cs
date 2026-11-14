@@ -78,8 +78,9 @@ public sealed partial class FakeDocker : IDockerEngine, IDockerCommands, ICompos
         {
             ["Id"] = summary["Id"]!.GetValue<string>(),
             ["Name"] = summary["Names"]![0]!.GetValue<string>(),
+            ["Image"] = summary["ImageID"]!.GetValue<string>(),
             ["RestartCount"] = 2,
-            ["State"] = new JsonObject { ["Status"] = summary["State"]!.GetValue<string>(), ["StartedAt"] = "2026-11-14T08:00:00Z" },
+            ["State"] = new JsonObject { ["Status"] = summary["State"]!.GetValue<string>(), ["Running"] = summary["State"]!.GetValue<string>() == "running", ["StartedAt"] = "2026-11-14T08:00:00Z" },
             ["Config"] = new JsonObject
             {
                 ["Image"] = summary["Image"]!.GetValue<string>(),
