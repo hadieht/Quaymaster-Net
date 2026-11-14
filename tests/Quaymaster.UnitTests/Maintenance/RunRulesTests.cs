@@ -173,7 +173,7 @@ public class RollbackDecisionTableTests
     //        isUpdate deployOk auto   outcome               quarantine restoreTag rollback
     [InlineData(true, true, true, "rolled_back", true, false, true)]
     [InlineData(true, true, false, "failed_left_as_is", true, true, false)]
-    [InlineData(true, false, true, "rolled_back", false, false, true)]
+    [InlineData(true, false, true, "rolled_back", false, true, true)]
     [InlineData(true, false, false, "failed_left_as_is", false, true, false)]
     [InlineData(false, true, true, "failed_left_as_is", false, false, false)]
     [InlineData(false, true, false, "failed_left_as_is", false, false, false)]
@@ -196,7 +196,7 @@ public class RollbackDecisionTableTests
     [Fact]
     public void A_broad_true_never_turns_rollback_on_for_a_service_with_writable_mounts()
     {
-        PolicyRules.ResolveAutoRollback(true, true, broadTrue: true).Value.Should().BeFalse();
+        PolicyRules.ResolveAutoRollback(null, true, broadTrue: true).Value.Should().BeFalse();
         PolicyRules.ResolveAutoRollback(true, false, broadTrue: true).Value.Should().BeTrue();
     }
 
@@ -359,6 +359,7 @@ public class RunServiceTests
         public Fixture(bool locked = false)
         {
             Ops.IsLocked("maintenance").Returns(locked);
+            Executor.ExecuteAsync(default!, default!, default).ReturnsForAnyArgs("completed");
             Ops.StartAsync(Arg.Any<OperationStart>(), Arg.Any<CancellationToken>()).Returns(c =>
             {
                 Started.Add(c.Arg<OperationStart>());

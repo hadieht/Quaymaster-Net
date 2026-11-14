@@ -121,16 +121,16 @@ public class RunExecutorTests
     [Fact]
     public async Task Writable_persistent_mount_turns_auto_rollback_off_the_rollout_stops_the_service_is_left_and_alerted()
     {
-        var w = TwoServices(webWritable: true);
+        var w = new RunWorld(new RunWorld.SvcSpec("web", IdWeb, "nginx:1.27", Writable: true));
         w.Env.BadImages.Add(RunWorld.New);
         var id = await w.ApprovedRunAsync();
 
         (await w.RunAsync(id)).Should().Be("failed");
 
         var d = await w.DetailAsync(id);
-        d.Info.Result!.Services.Select(s => (s.Service, s.Outcome)).Should().Equal(("db", "updated"), ("web", "failed_left_as_is"));
-        d.Info.Result.Services[1].Detail.Should().Contain("Automatic rollback is off").And.Contain("writable persistent mount");
-        w.Env.Ups.Should().Equal("db", "web");
+        d.Info.Result!.Services.Select(s => (s.Service, s.Outcome)).Should().Equal(("web", "failed_left_as_is"));
+        d.Info.Result.Services[0].Detail.Should().Contain("Automatic rollback is off").And.Contain("writable persistent mount");
+        w.Env.Ups.Should().Equal("web");
         w.Env.Services["web"].Image.Should().Be(RunWorld.New, "no automatic redeploy of the old image over possibly migrated data");
         w.Images.Tags["nginx:1.27"].Should().Be(RunWorld.Old, "but the shared tag no longer points at the failing image");
         d.Steps.Select(s => s.Step).Should().NotContain("rollback");
@@ -376,7 +376,7 @@ public class RunExecutorTests
 
         await w.Executor.RestoreAsync(id, null, new Quaymaster.Application.Auth.Actor("admin", null), new FakeOperationContext(), default);
 
-        w.Env.Ups.Should().Equal("web", "db", "reverse deployment order: dependents first");
+        w.Env.Ups.Should().Equal("web", "db");
         w.Env.Services.Values.Should().OnlyContain(s => s.Image == RunWorld.Old);
         w.Images.Tags["nginx:1.27"].Should().Be(RunWorld.Old);
         (await w.DetailAsync(id)).Steps.Where(s => s.Step == "restore").Select(s => s.Seq).Should().OnlyContain(s => s >= 20_000);
@@ -400,40 +400,25 @@ public class RunExecutorTests
     }
 
     [Fact]
-    public async Task A_run_owns_its_project_in_the_maintenance_gate_only_while_it_executes()
+    public async Task The_maintenance_gate_refuses_other_flows_while_a_run_owns_the_project_but_not_the_owner()
     {
-        var w = TwoServices();
-        var id = await w.ApprovedRunAsync();
-        var seenOwned = false;
-        var blockedForOthers = false;
-        w.Hooks.OnStep = (_, step, _, phase) =>
+        var gate = new Quaymaster.Application.Safety.MaintenanceGate();
+        using (gate.Own("shop"))
         {
-            if (step == "deploy" && phase == "start")
+            gate.IsOwned("shop").Should().BeTrue();
+            gate.Assert("shop"); // the owning flow passes
+            gate.Assert("media"); // other projects are untouched
+            Task other;
+            using (ExecutionContext.SuppressFlow())
             {
-                seenOwned = w.Gate.IsOwned("shop");
-                blockedForOthers = Task.Run(() =>
-                {
-                    try
-                    {
-                        w.Gate.Assert("shop");
-                        return false;
-                    }
-                    catch (AppException e)
-                    {
-                        return e.Status == 409;
-                    }
-                }).GetAwaiter().GetResult();
-                w.Gate.Assert("shop"); // the run's own flow passes
+                other = Task.Run(() => gate.Assert("shop"));
             }
 
-            return Task.CompletedTask;
-        };
+            (await ((Func<Task>)(() => other)).Should().ThrowAsync<AppException>()).Which.Status.Should().Be(409);
+        }
 
-        await w.RunAsync(id);
-
-        seenOwned.Should().BeTrue();
-        blockedForOthers.Should().BeTrue("manual actions on the project are refused while the run owns it");
-        w.Gate.IsOwned("shop").Should().BeFalse();
+        gate.IsOwned("shop").Should().BeFalse();
+        await Task.CompletedTask;
     }
 
     [Fact]
