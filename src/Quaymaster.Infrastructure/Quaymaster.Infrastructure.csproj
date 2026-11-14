@@ -23,6 +23,8 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Persistence\Migrations\Baseline.sql" />
+    <InternalsVisibleTo Include="Quaymaster.UnitTests" />
+    <InternalsVisibleTo Include="Quaymaster.IntegrationTests" />
   </ItemGroup>
 
 </Project>

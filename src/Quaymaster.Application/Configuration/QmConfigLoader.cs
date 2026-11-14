@@ -330,6 +330,12 @@ public static partial class QmConfigLoader
         {
             return false;
         }
+
+        // .NET accepts legacy shorthand such as "10.0.0"; an explicit proxy list must be unambiguous.
+        if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork && addr.Count(c => c == '.') != 3)
+        {
+            return false;
+        }
         if (slash < 0)
         {
             return true;
