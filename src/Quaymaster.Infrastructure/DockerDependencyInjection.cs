@@ -8,6 +8,7 @@ using Quaymaster.Application.Configuration;
 using Quaymaster.Application.Docker;
 using Quaymaster.Application.Events;
 using Quaymaster.Application.Monitoring;
+using Quaymaster.Application.Notifications;
 using Quaymaster.Application.Operations;
 using Quaymaster.Application.Registry;
 using Quaymaster.Application.Storage;
@@ -83,7 +84,13 @@ public static class DockerDependencyInjection
         services.AddSingleton<IEventQueries, EventQueries>();
         services.AddSingleton<IEventStreamStatus>(sp => sp.GetRequiredService<EventWatcher>());
         services.AddSingleton<ISystemService, SystemService>();
-        services.AddSingleton<INotificationSink, AuditNotificationSink>();
+        // notifications (T5): the sink the monitors / maintenance engine emit into is the real dispatcher
+        services.AddSingleton<INotificationStore, Quaymaster.Infrastructure.Persistence.Repositories.NotificationStore>();
+        services.AddSingleton<INotificationTransport, Quaymaster.Infrastructure.Notifications.OutboundHttpTransport>();
+        services.AddSingleton<NotificationService>();
+        services.AddSingleton<INotificationService>(sp => sp.GetRequiredService<NotificationService>());
+        services.AddSingleton<INotificationSink>(sp => sp.GetRequiredService<NotificationService>());
+        services.AddSingleton<IQMBackgroundTask, NotificationWorker>();
 
         // updates, image / volume / network removal, storage cleanup, registry credentials (T3)
         services.AddSingleton<ISecretBox>(_ => new Quaymaster.Infrastructure.Security.SecretBox(config.SecretKey.Bytes));
