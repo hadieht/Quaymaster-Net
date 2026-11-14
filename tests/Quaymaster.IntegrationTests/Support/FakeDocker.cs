@@ -264,10 +264,16 @@ public sealed class FakeDocker : IDockerEngine, IDockerCommands, IComposeCli, IS
             ComposeRuns.Add([.. argv]);
         }
 
-        var result = ComposeHandler?.Invoke(argv) ?? new ComposeRunResult(0, argv.Contains("ls") ? "[]" : "{}", string.Empty, false);
+        var result = ComposeHandler?.Invoke(argv) ?? DefaultRun(argv);
         options.OnOutput?.Invoke("compose output line");
         return Task.FromResult(result);
     }
+
+    public const string DefaultConfigJson =
+        "{\"name\":\"shop\",\"services\":{\"web\":{\"image\":\"nginx:1.27\",\"depends_on\":{\"db\":{\"condition\":\"service_started\"}}},\"db\":{\"image\":\"postgres:17\"}}}";
+
+    private static ComposeRunResult DefaultRun(IReadOnlyList<string> argv) =>
+        new(0, argv.Contains("ls") ? "[]" : argv.Contains("config") ? DefaultConfigJson : string.Empty, string.Empty, false);
 
     // ---- IStackFiles ------------------------------------------------------------------------------------------------
 

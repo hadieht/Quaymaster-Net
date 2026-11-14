@@ -111,8 +111,8 @@ public sealed class ContainerActionTests : IDisposable
     [Fact]
     public async Task Containers_Outside_The_Managed_Scope_Are_Not_Mutable()
     {
-        var h = await HarnessAsync(new() { ["QM_MANAGED_SCOPE"] = "shop" });
-        // project "shop" is in scope, the standalone container is not
+        var h = await HarnessAsync(new() { ["QM_MANAGED_SCOPE"] = "shop,web" });
+        // scope matches the container name AND its project (original guard.ts): web+shop pass, solo does not
         (await h.Admin.PostAsync("/containers/web/actions/restart", new { })).Status.Should().Be(200);
         var r = await h.Admin.PostAsync("/containers/solo/actions/restart", new { });
         r.Status.Should().Be(409);
