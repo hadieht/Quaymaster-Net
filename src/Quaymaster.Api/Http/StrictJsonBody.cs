@@ -32,9 +32,25 @@ public static partial class StrictJsonBody
     private static async Task<T> ParseAsync<T>(HttpContext context)
         where T : class
     {
-        // The 64 KiB cap is enforced by Kestrel (MaxRequestBodySize) while reading; it surfaces as a 413.
+        // Kestrel enforces MaxRequestBodySize too; this check keeps the contract independent of the server.
+        if (context.Request.ContentLength > RequestLimits.MaxBodyBytes)
+        {
+            throw new AppException(413, ErrorCode.Validation, "Request body too large");
+        }
+
         using var buffer = new MemoryStream();
-        await context.Request.Body.CopyToAsync(buffer, context.RequestAborted);
+        var chunk = new byte[8192];
+        int read;
+        while ((read = await context.Request.Body.ReadAsync(chunk, context.RequestAborted)) > 0)
+        {
+            if (buffer.Length + read > RequestLimits.MaxBodyBytes)
+            {
+                throw new AppException(413, ErrorCode.Validation, "Request body too large");
+            }
+
+            buffer.Write(chunk, 0, read);
+        }
+
         if (buffer.Length == 0 || IsBlank(buffer))
         {
             return Deserialize<T>("{}");

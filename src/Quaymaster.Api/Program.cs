@@ -48,7 +48,7 @@ builder.Logging.SetMinimumLevel(config.LogLevel switch
 builder.WebHost.ConfigureKestrel(kestrel =>
 {
     kestrel.AddServerHeader = false;
-    kestrel.Limits.MaxRequestBodySize = 64 * 1024; // the original's bodyLimit
+    kestrel.Limits.MaxRequestBodySize = RequestLimits.MaxBodyBytes;
     if (IPAddress.TryParse(config.Host, out var address))
     {
         kestrel.Listen(address, config.Port);
