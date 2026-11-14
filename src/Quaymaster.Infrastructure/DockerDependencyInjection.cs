@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Quaymaster.Application.Maintenance;
 using Quaymaster.Application.Abstractions;
 using Quaymaster.Application.Background;
 using Quaymaster.Application.Compose;
@@ -101,6 +102,18 @@ public static class DockerDependencyInjection
         services.AddSingleton<IComposeOwnershipProvider, ComposeOwnershipProvider>();
         services.AddSingleton<IImageCleanupService, ImageCleanupService>();
         services.AddSingleton<IStorageCleanupService, StorageCleanupService>();
+
+        // maintenance configuration + dry-run planner (T4a)
+        services.AddSingleton<IPolicyStore, PolicyStore>();
+        services.AddSingleton<IWindowStore, WindowStore>();
+        services.AddSingleton<IScheduleStore, ScheduleStore>();
+        services.AddSingleton<IRunStore, RunStore>();
+        services.AddSingleton<IProbeVerifier, HttpProbeVerifier>();
+        services.AddSingleton<PolicyService>();
+        services.AddSingleton<IPolicyResolver>(sp => sp.GetRequiredService<PolicyService>());
+        services.AddSingleton<WindowService>();
+        services.AddSingleton<ScheduleService>();
+        services.AddSingleton<IPlanService, PlannerService>();
 
         // background collectors
         services.AddSingleton<EventWatcher>();

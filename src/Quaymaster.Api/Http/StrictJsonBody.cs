@@ -29,7 +29,7 @@ public static partial class StrictJsonBody
         return model;
     }
 
-    private static async Task<T> ParseAsync<T>(HttpContext context)
+    public static async Task<T> ParseAsync<T>(HttpContext context)
         where T : class
     {
         // Kestrel enforces MaxRequestBodySize too; this check keeps the contract independent of the server.

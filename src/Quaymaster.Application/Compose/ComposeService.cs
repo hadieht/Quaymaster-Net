@@ -37,8 +37,27 @@ public interface IComposeService
     /// </summary>
     Task<JsonObject> ResolvedConfigForSafetyAsync(string name, CancellationToken ct);
 
+    /// <summary>
+    /// Everything the maintenance planner needs about a project, read-only: summary (throws <c>limited_capability</c> unless the
+    /// project is <c>full</c>), validation result, the unredacted resolved configuration (only when valid) and the live containers.
+    /// </summary>
+    Task<ComposePlanContext> PlanContextAsync(string name, CancellationToken ct);
+
+    /// <summary>Wanted <c>compose config --hash</c> per service plus the drift decision against the running containers (RT-01).</summary>
+    Task<ComposeDriftCheck> HashesAndDriftAsync(string name, IReadOnlyList<string> serviceNames, CancellationToken ct);
+
     void Invalidate();
 }
+
+/// <summary>See <see cref="IComposeService.PlanContextAsync"/>. <paramref name="Config"/> never leaves the server.</summary>
+public sealed record ComposePlanContext(
+    ComposeProjectSummary Summary,
+    ValidationResult Validation,
+    JsonObject? Config,
+    string? ConfigError,
+    IReadOnlyList<ContainerInfo> Containers);
+
+public sealed record ComposeDriftCheck(IReadOnlyDictionary<string, string> Hashes, IReadOnlyList<DriftEntry> Drift);
 
 public sealed partial class ComposeService(
     IMutationGateway gateway,
@@ -424,6 +443,36 @@ public sealed partial class ComposeService(
         }
 
         return drift;
+    }
+
+    public async Task<ComposePlanContext> PlanContextAsync(string name, CancellationToken ct)
+    {
+        var summary = await SummaryAsync(name, false, ct);
+        _ = FullTarget(summary); // limited_capability for anything but a full project
+        var validation = await ValidateAsync(name, ct);
+        JsonObject? cfg = null;
+        string? error = null;
+        if (validation.Valid)
+        {
+            try
+            {
+                cfg = (await ResolvedConfigAsync(name, true, ct)).Config;
+            }
+            catch (AppException e) when (e.Code == ErrorCode.ComposeFailed)
+            {
+                error = e.Message;
+            }
+        }
+
+        return new ComposePlanContext(summary, validation, cfg, error, await RawContainersAsync(name, true, ct));
+    }
+
+    public async Task<ComposeDriftCheck> HashesAndDriftAsync(string name, IReadOnlyList<string> serviceNames, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(serviceNames);
+        var target = FullTarget(await SummaryAsync(name, false, ct));
+        var wanted = await ConfigHashesAsync(target, serviceNames, ct);
+        return new ComposeDriftCheck(wanted, ComputeDrift(serviceNames, wanted, await RawContainersAsync(name, false, ct)));
     }
 
     private async Task<List<DriftEntry>> CheckDriftAsync(ComposeTarget target, IReadOnlyList<string> serviceNames, CancellationToken ct)
