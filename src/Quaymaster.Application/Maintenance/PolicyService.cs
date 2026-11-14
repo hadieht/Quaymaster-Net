@@ -95,6 +95,7 @@ public sealed partial class PolicyService(IPolicyStore store, IMutationGateway g
     /// <summary>Port of <c>policyKey()</c>: unknown kind and malformed keys are 400; a global policy is always keyed <c>*</c>.</summary>
     private static string Key(string kind, string key)
     {
+        key = Uri.UnescapeDataString(key); // "shop%2Fweb" reaches the route unescaped-for-slash only; the original decodeURIComponent()s
         if (!Kinds.Contains(kind, StringComparer.Ordinal))
         {
             throw AppException.BadRequest("Unknown policy scope");
