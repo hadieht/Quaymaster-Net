@@ -100,6 +100,17 @@ public interface IDockerCommands
 
     /// <summary>Returns false when the container was already in the requested state (HTTP 304).</summary>
     Task<bool> ExecuteAsync(ContainerCommand command, CancellationToken ct);
+
+    /// <summary>Standalone config clone: <c>POST /containers/create?name=</c> with the Engine's own body. Returns the new full id; the clone is never started here.</summary>
+    Task<string> CreateContainerAsync(string name, System.Text.Json.Nodes.JsonObject body, CancellationToken ct);
+
+    /// <summary><c>POST /networks/{network}/connect</c> for a (stopped) clone; <paramref name="endpoint"/> is the <c>EndpointConfig</c>.</summary>
+    Task ConnectNetworkAsync(string network, string containerId, System.Text.Json.Nodes.JsonObject endpoint, CancellationToken ct);
+
+    Task RenameContainerAsync(string containerId, string newName, CancellationToken ct);
+
+    /// <summary><c>POST /containers/{id}/update</c> with only a restart policy.</summary>
+    Task SetRestartPolicyAsync(string containerId, string policy, int maximumRetryCount, CancellationToken ct);
 }
 
 public sealed record ImagePull(string Repository, string Digest, RegistryAuth? Auth);

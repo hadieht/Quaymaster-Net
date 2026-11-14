@@ -55,6 +55,22 @@ public interface IMutationGateway
 
     Task RemoveNetworkAsync(string id, string name, CancellationToken ct);
 
+    // ---- standalone config clone (RT-12). `source` is always the ORIGINAL container's ref (original name): scope, self-protection and
+    // the read-only check are decided on it, never on the temporary clone name. ------------------------------------------------
+
+    /// <summary>Creates the stopped clone <paramref name="cloneName"/> from the Engine create body; returns its full id.</summary>
+    Task<string> CreateCloneAsync(ContainerRef source, string cloneName, System.Text.Json.Nodes.JsonObject body, CancellationToken ct);
+
+    Task ConnectCloneNetworkAsync(ContainerRef source, string cloneId, string network, System.Text.Json.Nodes.JsonObject endpoint, CancellationToken ct);
+
+    /// <summary>Renames <paramref name="container"/> (full id) to <paramref name="newName"/>.</summary>
+    Task RenameContainerAsync(ContainerRef container, string newName, CancellationToken ct);
+
+    Task SetRestartPolicyAsync(ContainerRef container, string policy, int maximumRetryCount, CancellationToken ct);
+
+    /// <summary>Start / stop / remove the clone <c>command.ContainerId</c> on behalf of <paramref name="source"/>.</summary>
+    Task<bool> ExecuteOnCloneAsync(ContainerRef source, ContainerCommand command, CancellationToken ct);
+
     /// <summary>Runs <c>docker compose</c> with a built argv; the subcommand allow-list and read-only mode are enforced here.</summary>
     Task<ComposeRunResult> RunComposeAsync(IReadOnlyList<string> argv, ComposeRunOptions? options, CancellationToken ct);
 }
@@ -188,6 +204,73 @@ public sealed class MutationGateway(
         }
 
         await commands.RemoveNetworkAsync(id, ct);
+    }
+
+    public async Task<string> CreateCloneAsync(ContainerRef source, string cloneName, System.Text.Json.Nodes.JsonObject body, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+        await AssertCloneSourceAsync(source, ct);
+        if (!Domain.Docker.DockerNames.IsSafeRef(cloneName, Domain.Docker.RefKind.Container))
+        {
+            throw AppException.BadRequest("Invalid container name");
+        }
+
+        return await commands.CreateContainerAsync(cloneName, body, ct);
+    }
+
+    public async Task ConnectCloneNetworkAsync(ContainerRef source, string cloneId, string network, System.Text.Json.Nodes.JsonObject endpoint, CancellationToken ct)
+    {
+        await AssertCloneSourceAsync(source, ct);
+        RequireFullId(cloneId);
+        await commands.ConnectNetworkAsync(network, cloneId, endpoint, ct);
+    }
+
+    public async Task RenameContainerAsync(ContainerRef container, string newName, CancellationToken ct)
+    {
+        await AssertCloneSourceAsync(container, ct);
+        RequireFullId(container.Id);
+        if (!Domain.Docker.DockerNames.IsSafeRef(newName, Domain.Docker.RefKind.Container))
+        {
+            throw AppException.BadRequest("Invalid container name");
+        }
+
+        await commands.RenameContainerAsync(container.Id, newName, ct);
+    }
+
+    public async Task SetRestartPolicyAsync(ContainerRef container, string policy, int maximumRetryCount, CancellationToken ct)
+    {
+        await AssertCloneSourceAsync(container, ct);
+        RequireFullId(container.Id);
+        if (policy is not ("no" or "always" or "unless-stopped" or "on-failure"))
+        {
+            throw AppException.BadRequest("Invalid restart policy");
+        }
+
+        await commands.SetRestartPolicyAsync(container.Id, policy, maximumRetryCount, ct);
+    }
+
+    public async Task<bool> ExecuteOnCloneAsync(ContainerRef source, ContainerCommand command, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        await AssertCloneSourceAsync(source, ct);
+        RequireFullId(command.ContainerId);
+        return await commands.ExecuteAsync(command, ct);
+    }
+
+    private async Task AssertCloneSourceAsync(ContainerRef source, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        await AssertContainerAsync(source, ct);
+        await EnsureWritableAsync(ct);
+        maintenance?.Assert(source.Project);
+    }
+
+    private static void RequireFullId(string id)
+    {
+        if (!Domain.Docker.DockerNames.IsFullId(id))
+        {
+            throw new AppException(500, ErrorCode.Internal, "Engine mutation requires a full container id");
+        }
     }
 
     public async Task<ComposeRunResult> RunComposeAsync(IReadOnlyList<string> argv, ComposeRunOptions? options, CancellationToken ct)

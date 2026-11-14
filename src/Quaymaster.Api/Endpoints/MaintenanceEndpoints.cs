@@ -122,6 +122,16 @@ public static class MaintenanceEndpoints
         admin.MapPost("/maintenance/runs/{id}/reject", async (HttpContext http, string id, IRunService runs) =>
             await runs.RejectAsync(id, http.ActorOf(), http.RequestAborted));
 
+        // Config-clone update of a standalone (non-Compose) container; manual only. 202 with the run (+ `runId`); output streams on /stream/operations/:runId.
+        admin.MapPost("/maintenance/standalone", async (HttpContext http, IValidator<StandaloneBody> validator, IStandaloneService standalone, IRunService runs) =>
+        {
+            var b = await StrictJsonBody.ReadAsync(http, validator);
+            var runId = await standalone.StartAsync(new StandaloneRequest(b.Container!, b.Confirm), http.ActorOf(), http.RequestAborted);
+            var run = System.Text.Json.JsonSerializer.SerializeToNode(await runs.GetAsync(runId, http.RequestAborted), new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web))!.AsObject();
+            run["runId"] = runId;
+            return Results.Json(run, statusCode: StatusCodes.Status202Accepted);
+        });
+
         // One-click restore of the run's recovery points (confirm = the run's target).
         admin.MapPost("/maintenance/runs/{id}/restore", async (HttpContext http, string id, IValidator<RestoreBody> validator, IRunService runs) =>
         {

@@ -81,6 +81,33 @@ internal sealed class DockerHttp : IDisposable
         }
     }
 
+    /// <summary>
+    /// POST with a JSON body, used only by the adapter's command methods (standalone clone: create, network connect, rename, update).
+    /// Returns the parsed response (null for an empty body). 404 becomes <c>not_found</c>.
+    /// </summary>
+    public async Task<JsonNode?> PostJsonAsync(string path, JsonNode? body, CancellationToken ct)
+    {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(TimeSpan.FromSeconds(60));
+        try
+        {
+            using var content = body is null ? null : new StringContent(body.ToJsonString(), System.Text.Encoding.UTF8, "application/json");
+            using var response = await _http.PostAsync(Url(path), content, cts.Token);
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                throw AppException.NotFound("Docker resource");
+            }
+
+            await EnsureSuccessAsync(response, cts.Token);
+            var text = await response.Content.ReadAsStringAsync(cts.Token);
+            return string.IsNullOrWhiteSpace(text) ? null : JsonNode.Parse(text);
+        }
+        catch (Exception e) when (e is not AppException && IsTransport(e, ct))
+        {
+            throw Unavailable(e);
+        }
+    }
+
     /// <summary>GET opening a long-lived response (events, logs). The caller disposes it.</summary>
     public async Task<HttpResponseMessage?> OpenStreamAsync(string path, CancellationToken ct)
     {

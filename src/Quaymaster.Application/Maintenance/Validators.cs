@@ -150,6 +150,15 @@ public sealed partial class ApproveBodyValidator : AbstractValidator<ApproveBody
     private static partial System.Text.RegularExpressions.Regex PlanHashRe();
 }
 
+public sealed class StandaloneBodyValidator : AbstractValidator<StandaloneBody>
+{
+    public StandaloneBodyValidator()
+    {
+        this.RequireString(x => x.Container, "container", 1, 200);
+        RuleFor(x => x.Confirm).MaximumLength(200).WithMessage("String must contain at most 200 character(s)").OverridePropertyName("confirm");
+    }
+}
+
 public sealed class RestoreBodyValidator : AbstractValidator<RestoreBody>
 {
     public RestoreBodyValidator()

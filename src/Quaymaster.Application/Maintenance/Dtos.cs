@@ -109,6 +109,8 @@ public sealed record RunBody(
 
 public sealed record ApproveBody(string? PlanHash);
 
+public sealed record StandaloneBody(string? Container, string? Confirm);
+
 public sealed record RestoreBody(string? Confirm, IReadOnlyList<string>? Services);
 
 public sealed record RunListDto(IReadOnlyList<RunInfo> Runs);

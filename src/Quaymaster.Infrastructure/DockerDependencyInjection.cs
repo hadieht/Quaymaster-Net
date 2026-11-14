@@ -125,6 +125,7 @@ public static class DockerDependencyInjection
         services.AddSingleton<IRunExecutor, RunExecutor>();
         services.AddSingleton<IRunService, RunService>();
         services.AddSingleton<IRunRecoveryService, RunRecoveryService>();
+        services.AddSingleton<IStandaloneService, StandaloneExecutor>();
 
         // background collectors
         services.AddSingleton<EventWatcher>();

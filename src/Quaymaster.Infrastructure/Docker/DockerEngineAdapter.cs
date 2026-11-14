@@ -406,6 +406,34 @@ internal sealed class DockerEngineAdapter : IDockerEngine, IDockerCommands, IDis
         }
     }
 
+    public async Task<string> CreateContainerAsync(string name, JsonObject body, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(body);
+        await GetVersionAsync(ct);
+        var r = await _http.PostJsonAsync($"/containers/create?name={Uri.EscapeDataString(name)}", body, ct);
+        var id = r?["Id"]?.GetValue<string>();
+        return DockerNames.IsFullId(id ?? string.Empty) ? id! : throw new AppException(502, ErrorCode.Internal, "Docker error: create returned no container id");
+    }
+
+    public async Task ConnectNetworkAsync(string network, string containerId, JsonObject endpoint, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(endpoint);
+        await GetVersionAsync(ct);
+        _ = await _http.PostJsonAsync($"/networks/{Uri.EscapeDataString(network)}/connect", new JsonObject { ["Container"] = containerId, ["EndpointConfig"] = endpoint }, ct);
+    }
+
+    public async Task RenameContainerAsync(string containerId, string newName, CancellationToken ct)
+    {
+        await GetVersionAsync(ct);
+        _ = await _http.PostJsonAsync($"/containers/{containerId}/rename?name={Uri.EscapeDataString(newName)}", null, ct);
+    }
+
+    public async Task SetRestartPolicyAsync(string containerId, string policy, int maximumRetryCount, CancellationToken ct)
+    {
+        await GetVersionAsync(ct);
+        _ = await _http.PostJsonAsync($"/containers/{containerId}/update", new JsonObject { ["RestartPolicy"] = new JsonObject { ["Name"] = policy, ["MaximumRetryCount"] = maximumRetryCount } }, ct);
+    }
+
     // ---- image / volume / network mutations (gateway only) --------------------------------------------------------------
 
     public async Task<string?> DistributionDigestAsync(string name, CancellationToken ct)
