@@ -26,7 +26,7 @@ public sealed record SessionInfoDto(UserInfoDto User, string CsrfToken, string E
 
 public sealed record OkDto(bool Ok = true);
 
-public sealed record OkNoteDto(string Note, bool Ok = true);
+public sealed record OkNoteDto(bool Ok, string Note);
 
 // ---- requests (strict: unknown properties are rejected; every field optional here so the validators
 // ---- can report "Required" like the original zod schemas) ------------------------------------------------

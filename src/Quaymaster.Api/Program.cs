@@ -1,47 +1,152 @@
-using Microsoft.AspNetCore.OpenApi;
+using System.Net;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
+using Microsoft.Extensions.FileProviders;
+using Quaymaster.Api;
+using Quaymaster.Api.Cli;
+using Quaymaster.Api.Endpoints;
+using Quaymaster.Api.Http;
+using Quaymaster.Application.Configuration;
+using Quaymaster.Infrastructure;
 
-// Top-level bootstrap for the Quaymaster API.
-//
-// This file is intentionally small: it wires up services and endpoints, and
-// defers all behaviour to the Application/Infrastructure layers. The
-// foundation phase (see docs/PROGRESS.md) replaces the placeholder pieces
-// with the full security pipeline (auth, CSRF, rate limiting, headers).
+// Operator helper commands run before any host is built (no config, no database).
+if (CliRunner.IsCommand(args))
+{
+    return await CliRunner.RunAsync(
+        args,
+        Console.In,
+        Console.Out,
+        Console.Error,
+        Environment.GetEnvironmentVariable,
+        () => Console.IsInputRedirected ? null : ReadPasswordInteractively());
+}
+
 var builder = WebApplication.CreateBuilder(args);
 
-// Strict DI: the host validates registrations, scopes and singleton lifetime
-// violations at startup instead of at first use.
+// --- Configuration: the full QM_* surface, validated once, failing fast with every problem listed. -----------------
+QmConfig config;
+try
+{
+    config = ApiConfiguration.Load(builder.Configuration, builder.Environment);
+}
+catch (ConfigurationException e)
+{
+    await Console.Error.WriteLineAsync(e.Message + Environment.NewLine + Environment.NewLine + "See .env.example for every supported variable.");
+    return 2;
+}
+
+builder.Logging.SetMinimumLevel(config.LogLevel switch
+{
+    "fatal" => LogLevel.Critical,
+    "error" => LogLevel.Error,
+    "warn" => LogLevel.Warning,
+    "debug" => LogLevel.Debug,
+    "trace" => LogLevel.Trace,
+    "silent" => LogLevel.None,
+    _ => LogLevel.Information,
+});
+
+builder.WebHost.ConfigureKestrel(kestrel =>
+{
+    kestrel.AddServerHeader = false;
+    kestrel.Limits.MaxRequestBodySize = 64 * 1024; // the original's bodyLimit
+    if (IPAddress.TryParse(config.Host, out var address))
+    {
+        kestrel.Listen(address, config.Port);
+    }
+    else if (string.Equals(config.Host, "localhost", StringComparison.OrdinalIgnoreCase))
+    {
+        kestrel.ListenLocalhost(config.Port);
+    }
+    else
+    {
+        kestrel.Listen(Dns.GetHostAddresses(config.Host)[0], config.Port);
+    }
+});
+
+builder.Services.AddQuaymasterInfrastructure(config);
+builder.Services.AddQuaymasterApi(config);
 builder.Services.AddOpenApi();
-builder.Services.AddHealthChecks();
 
 var app = builder.Build();
 
-// --- Health (public, no auth, no details) ----------------------------------------------------
-// Contract: exactly { "status": "ok" }. Keep it this shape; the frontend and
-// load balancers probe it.
-app.MapGet("/healthz", () => Results.Json(new { status = "ok" }));
+// --- Request pipeline (order matters; documented in docs/PROGRESS.md "Security pipeline") ------------------------------
+//  1. ExceptionHandling   every exception -> error envelope; nothing escapes it
+//  2. ForwardedHeaders    only with QM_TRUST_PROXY: client IP from X-Forwarded-For of trusted proxies
+//  3. SecurityHeaders     CSP, nosniff, frame/referrer/permissions policies, HSTS, no-store for /api
+//  4. Routing             endpoint metadata is available to the guard
+//  5. ApiGuard            /api/*: session auth (401), exact Origin + X-QM-CSRF on state changes (403)
+//  6. StaticFiles         the React build (QM_WEB_DIR)
+//  7. Endpoints           /healthz, /api/v1/*, unknown-route envelope, SPA fallback
+//     Rate limiting (login/setup) runs inside the use cases, after body validation and before password hashing.
+app.UseMiddleware<ExceptionHandlingMiddleware>();
+if (config.TrustProxy.Count > 0)
+{
+    app.UseForwardedHeaders();
+}
 
-// --- Static frontend (SPA) --------------------------------------------------------------------
-// The React build (web/dist) is served from QM_WEB_DIR, defaulting to a
-// sibling web/dist next to the app. SPA fallback: non-API GETs without a file
-// extension return index.html (client-side routing).
-var webDir = builder.Configuration["QM_WEB_DIR"] ?? Path.Combine(app.Environment.ContentRootPath, "web", "dist");
-if (Directory.Exists(webDir))
+app.UseMiddleware<SecurityHeadersMiddleware>();
+app.UseRouting();
+app.UseMiddleware<ApiGuardMiddleware>();
+
+var webDir = SiteEndpoints.ResolveWebDir(config, app.Environment.ContentRootPath);
+if (webDir is not null)
 {
     app.UseStaticFiles(new StaticFileOptions
     {
-        FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(webDir),
-    });
-    app.MapFallback(() =>
-    {
-        var index = Path.Combine(webDir, "index.html");
-        return File.Exists(index) ? Results.File(index, "text/html") : Results.NotFound();
+        FileProvider = new PhysicalFileProvider(webDir),
+        OnPrepareResponse = context =>
+            context.Context.Response.Headers.CacheControl =
+                context.File.PhysicalPath?.Contains($"{Path.DirectorySeparatorChar}assets{Path.DirectorySeparatorChar}", StringComparison.Ordinal) == true
+                    ? "public, max-age=31536000, immutable"
+                    : "no-cache",
     });
 }
 
-// --- OpenAPI document (machine-readable API surface) --------------------------------------------
-app.MapOpenApi();
+var api = app.MapGroup("/api/v1");
+AuthEndpoints.Map(api);
+UsersEndpoints.Map(api);
+SiteEndpoints.Map(app, webDir);
 
-app.Run();
+// The machine-readable API description is a development aid, not part of the public surface.
+if (app.Environment.IsDevelopment())
+{
+    app.MapOpenApi();
+}
+
+// Fail fast on a second instance / bad data directory before binding the port.
+await app.RunAsync();
+return 0;
+
+static string? ReadPasswordInteractively()
+{
+    string Read(string prompt)
+    {
+        Console.Error.Write(prompt);
+        var buffer = new System.Text.StringBuilder();
+        ConsoleKeyInfo key;
+        while ((key = Console.ReadKey(intercept: true)).Key != ConsoleKey.Enter)
+        {
+            if (key.Key == ConsoleKey.Backspace)
+            {
+                if (buffer.Length > 0)
+                {
+                    buffer.Length--;
+                }
+            }
+            else
+            {
+                buffer.Append(key.KeyChar);
+            }
+        }
+
+        Console.Error.WriteLine();
+        return buffer.ToString();
+    }
+
+    var first = Read("Password (min 12 characters): ");
+    var second = Read("Repeat: ");
+    return first == second ? first : throw new ArgumentException("The passwords do not match");
+}
 
 // Exposed so integration tests (WebApplicationFactory) can reach the builder.
 public partial class Program;
