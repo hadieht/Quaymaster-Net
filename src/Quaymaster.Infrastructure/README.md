@@ -6,6 +6,7 @@ outbound notification transports, audit writer. References Application (and
 through it Domain).
 
 Conventions:
+
 - Every external system gets one folder with a single public entry point
   (IDockerEngine, IComposeRunner, AppDbContext, ...).
 - No ASP.NET-specific types (no HttpRequest, no middleware).

@@ -39,6 +39,7 @@ settled, open questions). A retry of a phase reads this file first and
 ## T1 — foundation: config, security pipeline, auth, DB, error envelope (forge, 2026-11-14)
 
 **Built** (wire format identical to the original; zero changes to `web/`):
+
 - Endpoints: `GET /healthz`, `GET /auth/status`, `POST /auth/setup|login|logout|logout-all|password`, `GET /auth/me`,
   `GET|POST /users`, `PATCH /users/:id`, `POST /users/:id/password`, `DELETE /users/:id` (all under `/api/v1`).
   Everything else under `/api/` returns the `not_found` envelope; non-API GETs fall back to the SPA when `QM_WEB_DIR`/`web/dist` exists.
@@ -71,6 +72,7 @@ tests: Microsoft.Extensions.TimeProvider.Testing 10.5.0. Tool: `dotnet-ef` 10.0.
 `scripts/smoke-t1.sh` (real process, curl) all checks pass. scrypt output verified against vectors produced by the original Node implementation.
 
 **Conventions / what later phases must know**
+
 - New endpoint group: static class in `Api/Endpoints`, `Map(RouteGroupBuilder api)`, registered in Program.cs. Admin-only:
   `.RequireCapability(Capability.Write)`; logs: `Capability.Logs`. `/api/*` is authenticated by default (fail-closed); only
   `ApiGuardMiddleware.PublicPaths` is public. Read the caller with `http.RequireAuth()` / `http.ActorOf()`.
@@ -89,8 +91,9 @@ tests: Microsoft.Extensions.TimeProvider.Testing 10.5.0. Tool: `dotnet-ef` 10.0.
 - Logging: CA1848 is enforced — use `[LoggerMessage]` (see `Infrastructure/Logging.cs`, `Api/Http/Log.cs`). Braces are required (IDE0011).
 
 **Contract decisions** (wire format: no deviations)
+
 - Default allowed origins derive from `QM_HOST`/`QM_PORT` exactly like the original (not from the Host header); IPv6 hosts are bracketed.
-- Unauthenticated requests to *unknown* `/api/*` routes get 401 (as in the original, auth runs first); authenticated ones get 404.
+- Unauthenticated requests to _unknown_ `/api/*` routes get 401 (as in the original, auth runs first); authenticated ones get 404.
 - Wrong method on a known route = 404 envelope (Fastify behaviour), not 405.
 - `/openapi/v1.json` (scaffold) is now served only in Development: it is not part of the original surface and would be unauthenticated.
 - Only the first unknown JSON key is named in the strict-body error (zod lists all).
@@ -116,12 +119,13 @@ SSE `GET /stream/events|stats|logs/:ref|operations/:id`.
 `Compose/` (ComposeCli, StackFiles), `Streaming/SseHub`, `Host/`, `Persistence/Repositories/DockerStores.cs`, `DockerDependencyInjection.cs`. Api `Endpoints/{Docker,Misc,Stream}Endpoints.cs`, `Http/SseResult.cs`.
 
 **Decisions**
+
 - **Docker.DotNet**: package `Docker.DotNet.Enhanced` **4.4.1** (the maintained fork; original `Docker.DotNet` stops at 3.125.15, same `Docker.DotNet` namespace; client via `DockerClientBuilder`).
   Hybrid adapter: Docker.DotNet for ping/version and the seven lifecycle commands (by full 64-hex id; remove is never forced, never `-v`); a small GET-only socket client for inspect/list/info/df/events/logs/stats so the daemon's PascalCase JSON passes through unchanged (typed models drop fields). API version = min(daemon, 1.55), refuses < 1.40.
 - **Single gateway** `MutationGateway`: the only class allowed to use `IDockerCommands` and `IComposeCli`; read-only / managed scope / self-protection (`SafetyPolicy`) / audit. Audit params are now redacted (`AuditLog` takes the shared `Scrubber`; `Redactor.RedactDeep` on every param object).
 - No SQL entities for events/stats_rollups/operations/kv/ignored_targets: parameterised SQL over the Baseline tables (no model-snapshot churn).
 - Container `recreate` answers **200** `{ok:true, operationId}` exactly like the original route (the brief said 202; the original returns 200; the web UI does not care). Compose actions answer 202.
-- Compose action `pull` (listed in the brief) does **not** exist in the original (pull would move tags outside the staged workflow) → unknown action = 400. 
+- Compose action `pull` (listed in the brief) does **not** exist in the original (pull would move tags outside the staged workflow) → unknown action = 400.
 - A daemon that is down at start does not stop the app: reads answer 503 `docker_unavailable`, `DockerBootstrap` retries lazily (and in the background).
 - `GET|POST|DELETE /ignored` ("stop monitoring", admin only, `{entries}` / 201 entry / removed entry) are ported (`IgnoreService`): a pure filter that never calls Docker/Compose/files, allowed in read-only mode; audit actions `monitoring.stop` / `monitoring.restore`.
 - Image refs containing `/` arrive percent-encoded (`/images/reg.io%2Fteam%2Fapp:tag`); the route value is unescaped before the safe-ref check (tested).
@@ -155,6 +159,7 @@ ComposeOwnershipProvider). Infrastructure: `Registry/RegistryClient` (HttpClient
 adapter additions in `DockerEngineAdapter`. Api: `Endpoints/UpdateEndpoints.cs`.
 
 **Decisions**
+
 - **One gateway, extended**: `IDockerCommands` gained `PullImageAsync/TagImageAsync/RemoveImageAsync/RemoveVolumeAsync/RemoveNetworkAsync`;
   `IMutationGateway` wraps each (read-only → `read_only`; volume/network also re-check self-protection + managed scope; pull refuses anything
   but a `sha256:` digest). Nothing else may touch `IDockerCommands` (architecture test still green). Deletes are never forced; `RemoveVolume` never `force`.
@@ -196,6 +201,7 @@ anonymous-volume preview+execute + single volume + network removal, QM_MANAGED_S
 CI without Docker: `dotnet test --filter "Category!=Live"`.
 
 **What T4 (maintenance/rollback) must know**
+
 - `IRollbackStore` (put/get/active/release/list) and `IStagedStore` exist; rollback tags: `ImageReferences.RollbackTag(project, service, runId)`; retention `QM_ROLLBACK_RETENTION_DAYS` = `config.RollbackRetention`.
   Cleanup already protects active rollback points (by tag and by image id) and expired ones are removed via the `expired_rollback` category.
 - `IQuarantineService.AddAsync(target, digest, runId, reason)` is the hook for failed unattended runs; `UpdateService` flags `quarantined` on the status.
@@ -205,9 +211,10 @@ CI without Docker: `dotnet test --filter "Category!=Live"`.
 - Image/volume/network removal invalidate the container cache only; T4's inventory caches (compose, df) are not invalidated by removals (df is re-measured per reclaim anyway).
 
 **Known gaps for T4/T5**
+
 - No periodic update check yet (T5 monitors: "update available" alerts + scheduled checks); `/updates` only checks on demand / TTL.
 - `compose` projects' image refs are read from the resolved config only for `level: full` projects; limited projects protect only through their running containers' images.
-- Pulls of private registries with credentials under a *different* host alias (e.g. `index.docker.io`) are not matched; use `registry-1.docker.io` for Docker Hub.
+- Pulls of private registries with credentials under a _different_ host alias (e.g. `index.docker.io`) are not matched; use `registry-1.docker.io` for Docker Hub.
 - Preview state is process-local (single instance by design).
 - `DELETE /registries/credentials/:host` returns `{ok:true}` as the original; PUT echoes the host as typed but stores it lower-case.
 
@@ -217,6 +224,7 @@ T4 domain layer (8847781) is unchanged. T4a adds policies, windows, schedules an
 standalone/monitors/stream (T4c) are **not** here.
 
 **Endpoints** (`Api/Endpoints/MaintenanceEndpoints.cs`; reads = any authenticated user, writes = admin; wire format of `shared/src/maintenance.ts`)
+
 - `GET /maintenance/policies` → `{policies:[{scopeKind,scopeKey,policy,updatedAt}]}` · `GET /maintenance/policies/effective?project&service&container` → `EffectivePolicy`
 - `PUT|DELETE /maintenance/policies/:kind/:key` (kind = global|project|service|container; `:key` is URL-decoded, `shop%2Fweb`; global is always keyed `*`) → PUT `{scopeKind,scopeKey,policy}`, DELETE `{ok:true}`
 - `GET /maintenance/windows` → `{windows:[…openNow,nextStart]}` · `POST` (201) · `PUT /:id` · `DELETE /:id`
@@ -224,6 +232,7 @@ standalone/monitors/stream (T4c) are **not** here.
 - `POST /maintenance/plan {project, services?, applyDrift?, allowUnhealthy?}` → `RunDetail` (run fields flattened + `plan` + `steps`), stored as a `dry_run` run, status `planned`
 
 **What was built**
+
 - Application (`Application/Maintenance/`): `Stores.cs` (`IPolicyStore`, `IWindowStore`, `IScheduleStore`, `IRunStore` + records), `Dtos.cs`, `Validators.cs`
   (FluentValidation, zod-style messages, strict bodies), `PolicyService` (also `IPolicyResolver`, `IProbeVerifier` abstraction), `WindowService`,
   `ScheduleService` (in `WindowAndScheduleServices.cs`), `PlannerService : IPlanService` (`PlanService.cs`; the class is named `PlannerService` because
@@ -235,6 +244,7 @@ standalone/monitors/stream (T4c) are **not** here.
   `StrictJsonBody.ParseAsync` made public for the raw policy body).
 
 **Decisions**
+
 - **Read-only mode** does not block policy/window/schedule CRUD or the dry run at the endpoint (as the original: only run create/approve/restore check it). It
   does show up in the plan: the guard's read-only refusal becomes `blocked:{code:"refused"}` (original `empty('refused', …)`), nothing is mutated. All writes
   are audited through `IMutationGateway.AuditedAsync` (`maintenance.policy.put|delete`, `maintenance.window.create|update|delete`, `maintenance.schedule.*`,
@@ -260,6 +270,7 @@ digest change, drift block/`applyDrift`, ignore policy, services filter, depende
 Totals: **397 unit + 233 integration, 0 failed**; `dotnet build --no-incremental` 0 warnings, `npm run build` green, `web/` untouched.
 
 **What T4b must know (hooks)**
+
 - `IPlanService.PlanProjectAsync(PlanRequest, ct)` is the re-plan at the executor's preflight: compare `Plan.PlanHash` with the approved one
   (`PlanHasher.Compute`, `PlanHasher.DescribeDiff` for the `approval_stale` reason). `PlanRequest` already carries `ScheduleMode` and `OnlyModes` (scheduled runs: `["auto"]`),
   `AllowUnhealthy`, `ApplyDrift`, `Fresh`. `IPlanService.DryRunAsync` shows how a run row + audit entry are written.
@@ -320,28 +331,29 @@ back, policy restored, started, tag moved back (`rolled_back` on health failure,
 events as compose runs (`run.succeeded|rolled_back|failed`). **No `/restore` for standalone runs** (409 "restored by hand": the old container is kept; the run's `reason` has the exact commands).
 
 **Monitors** (`Application/Monitoring/MaintenanceMonitor`, `IMonitorEvaluator.TickAsync`, background task, 60 s): per tick — approvals past `QM_APPROVAL_EXPIRY_HOURS` → `run.skipped`; **scheduler**
-(cron cursor moves *before* firing = at-most-once; `Domain/Maintenance/ScheduleTick` decides Fire/SkipMissed(>5 min, unless the latest one of an update job with an open window)/SkipWindow;
+(cron cursor moves _before_ firing = at-most-once; `Domain/Maintenance/ScheduleTick` decides Fire/SkipMissed(>5 min, unless the latest one of an update job with an open window)/SkipWindow;
 `update` → `IRunService.CreateAsync(..., ScheduledRun)`, `image_check` → `updates.available`, `cleanup_report` → `cleanup.report`; `image_pull` is consumed but **not executed**);
 `maintenance.upcoming` (within `upcomingMaintenanceMinutes`); `updates.available` (daily, marker in `kv` `monitor.updates.lastCheck`); `host.disk_low` when the Docker root is below `QM_DISK_FLOOR_BYTES`.
 Container died / unhealthy / OOM / restart loop / CPU / memory stay in `Monitors` (event driven; restart-loop counting now `Domain/Maintenance/RestartLoop`). **De-dup/cool-down lives in the
 outbound abstraction** (`INotificationSink`: in-memory per `DedupeKey` + `CooldownMs`; the monitor deliberately re-emits every tick). `GET|PUT /monitors/settings` drive the loop (`enabled=false` stops announcements, schedules still fire).
 
 ### Event contract for T5 (`NotificationEvent(Type, Severity, Title, Message, DedupeKey, CooldownMs?, Data?)`)
-| Type | Severity | DedupeKey | CooldownMs | Data |
-|---|---|---|---|---|
-| `maintenance.upcoming` | info | `upcoming:<scheduleId>:<occurrenceMs>` | 86 400 000 | `schedule, scheduleId, mode, target, at(ISO)` |
-| `maintenance.awaiting_approval` | info | `approval:<runId>` | – | `run, planHash` |
-| `run.succeeded` / `run.rolled_back` / `run.partial` / `run.skipped` / `run.failed` (also blocked/interrupted-by-executor) | info / warning / warning / info / critical | `run:<runId>` | – | `run, target, status` (`guidance` appended to message on failure) |
-| `run.skipped` (approval expired) | info | `expired:<runId>` | – | `run, target, status` |
-| `run.skipped` (scheduled update, window closed) | info | `skipped:<scheduleId>:<occurrenceMs>` | – | `schedule, reason:"window_closed"` |
-| `run.failed` (scheduled update blocked) | warning | `blocked:<project>:<code>` | 86 400 000 | – |
-| `run.interrupted` / `service.left_down` (startup recovery, auto-rollback off, failed undo) | warning / critical | see T4b | – | `run, target, services[]` |
-| `run.conflict` | warning | see T4b | – | – |
-| `updates.available` | info | `updates:<sorted ref@digest list, ≤300 chars>` | 86 400 000 | `count, images[]` |
-| `cleanup.report` | info | `cleanup:<yyyy-MM-dd>` | – | `candidates, totalBytes, protected` |
-| `host.disk_low` | warning/critical | `disk-low` | 21 600 000 | `freeBytes, freePercent` / `floorBytes` |
-| `container.died` / `container.unhealthy` / `container.restart_loop` / `host.cpu_high` / `host.memory_high` | per T2 | per T2 | per T2 | `container, …` |
-Wire source of truth: `INotificationSink.Notify`; T5 replaces `AuditNotificationSink` (default: audit `monitor.alert` with the in-memory cool-down).
+
+| Type                                                                                                                                                 | Severity                                   | DedupeKey                                      | CooldownMs | Data                                                              |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ | ---------------------------------------------- | ---------- | ----------------------------------------------------------------- |
+| `maintenance.upcoming`                                                                                                                               | info                                       | `upcoming:<scheduleId>:<occurrenceMs>`         | 86 400 000 | `schedule, scheduleId, mode, target, at(ISO)`                     |
+| `maintenance.awaiting_approval`                                                                                                                      | info                                       | `approval:<runId>`                             | –          | `run, planHash`                                                   |
+| `run.succeeded` / `run.rolled_back` / `run.partial` / `run.skipped` / `run.failed` (also blocked/interrupted-by-executor)                            | info / warning / warning / info / critical | `run:<runId>`                                  | –          | `run, target, status` (`guidance` appended to message on failure) |
+| `run.skipped` (approval expired)                                                                                                                     | info                                       | `expired:<runId>`                              | –          | `run, target, status`                                             |
+| `run.skipped` (scheduled update, window closed)                                                                                                      | info                                       | `skipped:<scheduleId>:<occurrenceMs>`          | –          | `schedule, reason:"window_closed"`                                |
+| `run.failed` (scheduled update blocked)                                                                                                              | warning                                    | `blocked:<project>:<code>`                     | 86 400 000 | –                                                                 |
+| `run.interrupted` / `service.left_down` (startup recovery, auto-rollback off, failed undo)                                                           | warning / critical                         | see T4b                                        | –          | `run, target, services[]`                                         |
+| `run.conflict`                                                                                                                                       | warning                                    | see T4b                                        | –          | –                                                                 |
+| `updates.available`                                                                                                                                  | info                                       | `updates:<sorted ref@digest list, ≤300 chars>` | 86 400 000 | `count, images[]`                                                 |
+| `cleanup.report`                                                                                                                                     | info                                       | `cleanup:<yyyy-MM-dd>`                         | –          | `candidates, totalBytes, protected`                               |
+| `host.disk_low`                                                                                                                                      | warning/critical                           | `disk-low`                                     | 21 600 000 | `freeBytes, freePercent` / `floorBytes`                           |
+| `container.died` / `container.unhealthy` / `container.restart_loop` / `host.cpu_high` / `host.memory_high`                                           | per T2                                     | per T2                                         | per T2     | `container, …`                                                    |
+| Wire source of truth: `INotificationSink.Notify`; T5 replaces `AuditNotificationSink` (default: audit `monitor.alert` with the in-memory cool-down). |
 
 **Tests**: unit **+23 → 502** (`T4cTests.cs`: clone spec; the full standalone sequence order CreateClone→ConnectCloneNetwork→stop→SetRestartPolicy→Rename×2→ExecuteOnClone(start)→Probe; rollback sequence on
 failed health; pull failure touches nothing; prepare refusals; scheduler decisions + window gating; restart-loop window; monitor events + dedupe keys; sink cool-down; approval expiry via `RunService`) ·
@@ -365,15 +377,15 @@ does not use `/stream/maintenance` yet; `Fresh` plan generation for scheduled ru
 
 **Channel kinds & wire options**
 
-| kind     | required config                      | optional config                                  | masked in API |
-|----------|--------------------------------------|--------------------------------------------------|---------------|
-| webhook  | url                                  | secret, headers                                  | url, secret, headers |
-| ntfy     | serverUrl, topic                     | token                                            | serverUrl, token |
-| gotify   | serverUrl, appToken                  | —                                                | serverUrl, appToken |
-| discord  | url                                  | —                                                | url |
-| slack    | url                                  | —                                                | url |
-| telegram | botToken, chatId                     | apiBase                                          | botToken |
-| smtp     | host, port, from, to                 | secure, username, password                       | password |
+| kind     | required config      | optional config            | masked in API        |
+| -------- | -------------------- | -------------------------- | -------------------- |
+| webhook  | url                  | secret, headers            | url, secret, headers |
+| ntfy     | serverUrl, topic     | token                      | serverUrl, token     |
+| gotify   | serverUrl, appToken  | —                          | serverUrl, appToken  |
+| discord  | url                  | —                          | url                  |
+| slack    | url                  | —                          | url                  |
+| telegram | botToken, chatId     | apiBase                    | botToken             |
+| smtp     | host, port, from, to | secure, username, password | password             |
 
 Per-channel: `enabled`, `events[]` (event types this channel receives; `[*]` = all), `minSeverity` (info|warning|critical).
 

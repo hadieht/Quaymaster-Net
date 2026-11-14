@@ -5,8 +5,13 @@
   "type": "module",
   "description": "Quaymaster: self-hosted Docker dashboard — .NET 10 backend, unchanged React frontend",
   "license": "MIT",
-  "engines": { "node": ">=22" },
-  "workspaces": ["shared", "web"],
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "shared",
+    "web"
+  ],
   "scripts": {
     "build": "npm run build -w shared && npm run build -w web",
     "typecheck": "npm run typecheck -w shared && npm run typecheck -w web",

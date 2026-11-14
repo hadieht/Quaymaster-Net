@@ -18,16 +18,16 @@ rebuilt on a **modern .NET 10 backend** with an unchanged React frontend.
 
 ## Repository layout
 
-| Path | Contents |
-| --- | --- |
-| `src/Quaymaster.Domain` | Pure domain model (no framework refs) |
-| `src/Quaymaster.Application` | Use cases, DTOs, validation, abstractions |
+| Path                            | Contents                                                 |
+| ------------------------------- | -------------------------------------------------------- |
+| `src/Quaymaster.Domain`         | Pure domain model (no framework refs)                    |
+| `src/Quaymaster.Application`    | Use cases, DTOs, validation, abstractions                |
 | `src/Quaymaster.Infrastructure` | Docker, EF Core/SQLite, registry, secrets, notifications |
-| `src/Quaymaster.Api` | ASP.NET Core minimal API: endpoints, middleware, SSE |
-| `tests/` | xUnit unit + integration (WebApplicationFactory) |
-| `web/` | React frontend (copied from quaymaster, unmodified) |
-| `shared/` | Shared API types (copied from quaymaster) |
-| `e2e/` | Playwright end-to-end suite (adapted to the .NET server) |
+| `src/Quaymaster.Api`            | ASP.NET Core minimal API: endpoints, middleware, SSE     |
+| `tests/`                        | xUnit unit + integration (WebApplicationFactory)         |
+| `web/`                          | React frontend (copied from quaymaster, unmodified)      |
+| `shared/`                       | Shared API types (copied from quaymaster)                |
+| `e2e/`                          | Playwright end-to-end suite (adapted to the .NET server) |
 
 ## Quick start (development)
 

@@ -5,6 +5,7 @@ validation rules, and the abstractions (interfaces) that Infrastructure
 implements. References Domain only.
 
 Conventions:
+
 - Each feature folder contains its own service + DTOs + validators.
 - Services depend on abstractions (interfaces defined here), never on
   concrete infrastructure types. Dependency inversion: Infrastructure

@@ -63,7 +63,7 @@ public static class DependencyInjection
             sp.GetRequiredService<Quaymaster.Domain.Redaction.Scrubber>()));
 
         // hosted machinery: StartupInitializer MUST be registered before the background host
-        services.AddHostedService(sp =>
+        services.AddSingleton<StartupInitializer>(sp =>
         {
             _ = sp.GetRequiredService<InstanceLock>(); // fail fast on a second instance before touching the database
             return ActivatorUtilities.CreateInstance<StartupInitializer>(sp);

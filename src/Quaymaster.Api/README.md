@@ -4,6 +4,7 @@ HTTP surface only: middleware pipeline, endpoint groups, DI composition. No busi
 Application) and no persistence code (Infrastructure). References Infrastructure.
 
 Conventions:
+
 - `Program.cs` documents the middleware order; security-relevant middleware lives in `Http/`.
 - One static `Map(RouteGroupBuilder)` class per endpoint group in `Endpoints/`; bodies via `StrictJsonBody.ReadAsync`;
   failures by throwing `AppException` (rendered as the standard error envelope by `ExceptionHandlingMiddleware`).

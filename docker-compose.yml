@@ -7,14 +7,14 @@ services:
     image: quaymaster-net:dev
     container_name: quaymaster-net
     ports:
-      - "${QM_PORT:-8787}:8787"
+      - '${QM_PORT:-8787}:8787'
     environment:
       QM_DATA_DIR: /var/lib/quaymaster-net
       QM_HOST: 0.0.0.0
-      QM_PORT: "8787"
+      QM_PORT: '8787'
       QM_STACK_PATHS: /srv/stacks
     group_add:
-      - "${DOCKER_GID:-0}"
+      - '${DOCKER_GID:-0}'
     volumes:
       - qmdata:/var/lib/quaymaster-net
       - /var/run/docker.sock:/var/run/docker.sock

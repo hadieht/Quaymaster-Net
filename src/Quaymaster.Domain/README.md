@@ -5,6 +5,7 @@ No framework references (no ASP.NET, no EF Core, no Docker client). This
 project must not reference any other project.
 
 Conventions:
+
 - One folder per bounded context (Containers, Compose, Maintenance, ...).
 - Entities are plain C# types; behaviour over data (methods on the entity,
   not service-side mutation where possible).

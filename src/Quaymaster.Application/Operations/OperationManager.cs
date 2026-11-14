@@ -168,6 +168,13 @@ public sealed partial class OperationManager(IOperationStore store, Scrubber scr
             context.Log($"\nERROR: {error}\n");
         }
 
+        // Release the lock as soon as the work is done, so other operations on the same key can start.
+        // The operation result is persisted afterwards; the lock only serialises the work itself.
+        lock (_gate)
+        {
+            _locks.Remove(operation.LockKey);
+        }
+
         try
         {
             await _store.FinishAsync(context.Id, error is null ? "succeeded" : "failed", error, CancellationToken.None);
@@ -180,10 +187,6 @@ public sealed partial class OperationManager(IOperationStore store, Scrubber scr
         }
 
         live.Publish(new OperationEvent.Status(error is null ? "succeeded" : "failed", error), done: true);
-        lock (_gate)
-        {
-            _locks.Remove(operation.LockKey);
-        }
 
         // keep the replay buffer for a minute for late subscribers, then fall back to the database
         _ = Task.Delay(TimeSpan.FromSeconds(60), time, CancellationToken.None).ContinueWith(

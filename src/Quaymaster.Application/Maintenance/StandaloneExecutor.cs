@@ -119,7 +119,7 @@ public sealed class StandaloneExecutor(
     {
         ArgumentNullException.ThrowIfNull(actor);
         var p = await PrepareAsync(request, ct);
-        if (operations.IsLocked(LockKey) || await runs.RunningAsync(ct) is not null)
+        if (await runs.RunningAsync(ct) is not null)
         {
             throw AppException.Conflict("Another maintenance run is in progress (one run at a time)");
         }

@@ -19,7 +19,7 @@ if [ "$MODE" = screenshots ] && [ -z "${E2E_FIXTURE_DIR:-}" ]; then
 fi
 FX="$FXDIR/scripts"
 
-[ -f server/dist/index.js ] && [ -f web/dist/index.html ] || { echo "run 'npm run build' first" >&2; exit 1; }
+[ -f web/dist/index.html ] || { echo "run 'npm run build' first" >&2; exit 1; }
 if ss -ltn 2>/dev/null | grep -q ":$PORT "; then echo "port $PORT busy" >&2; exit 1; fi
 
 DATA="$(mktemp -d "${TMPDIR:-/tmp}/qm-e2e.XXXXXX")"
@@ -42,9 +42,9 @@ echo "== server on 127.0.0.1:$PORT"
 QM_HOST=127.0.0.1 QM_PORT="$PORT" QM_DATA_DIR="$DATA" QM_SECRET_KEY="$(openssl rand -base64 32)" \
   QM_MANAGED_SCOPE='qmtest-*' QM_VISIBLE_SCOPE='qmtest-*' QM_STACK_PATHS="$FXDIR/stacks" \
   QM_DOCKER_ROOT_MOUNT="$FXDIR" QM_REGISTRY_INSECURE=127.0.0.1:5055 QM_SCRYPT_LOG2_N=14 \
-  QM_WEB_DIR="$ROOT/web/dist" NODE_ENV=production node server/dist/index.js >"$DATA/server.log" 2>&1 &
+  QM_WEB_DIR="$ROOT/web/dist" dotnet run --project src/Quaymaster.Api --no-launch-profile >"$DATA/server.log" 2>&1 &
 SERVER_PID=$!
-for _ in $(seq 1 40); do
+for _ in $(seq 1 60); do
   curl -fsS "http://127.0.0.1:$PORT/healthz" >/dev/null 2>&1 && break
   kill -0 "$SERVER_PID" 2>/dev/null || { cat "$DATA/server.log" >&2; exit 1; }
   sleep 0.5

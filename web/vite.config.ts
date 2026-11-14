@@ -2,8 +2,8 @@ import path from 'node:path';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
-// Dev: the SPA runs on 5173 and proxies /api to the Quaymaster server. The server checks the Origin header
-// of mutating requests, so the proxy rewrites it to the target's own origin.
+// Dev: the SPA runs on 5173 and proxies /api to the Quaymaster .NET server.
+// The server checks the Origin header of mutating requests, so the proxy rewrites it to the target's own origin.
 const target = process.env['QM_DEV_API'] ?? 'http://127.0.0.1:8787';
 
 export default defineConfig({

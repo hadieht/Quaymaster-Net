@@ -5,7 +5,14 @@ import reactHooks from 'eslint-plugin-react-hooks';
 
 export default tseslint.config(
   {
-    ignores: ['**/dist/**', '**/node_modules/**', 'coverage/**', '.local/**', 'package-lock.json', 'test-fixtures/**'],
+    ignores: [
+      '**/dist/**',
+      '**/node_modules/**',
+      'coverage/**',
+      '.local/**',
+      'package-lock.json',
+      'test-fixtures/**',
+    ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

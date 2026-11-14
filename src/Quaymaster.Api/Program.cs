@@ -7,6 +7,7 @@ using Quaymaster.Api.Endpoints;
 using Quaymaster.Api.Http;
 using Quaymaster.Application.Configuration;
 using Quaymaster.Infrastructure;
+using Quaymaster.Infrastructure.Hosting;
 
 // Operator helper commands run before any host is built (no config, no database).
 if (CliRunner.IsCommand(args))
@@ -21,6 +22,10 @@ if (CliRunner.IsCommand(args))
 }
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Ensure console logging is enabled early so we see startup logs
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
 
 // --- Configuration: the full QM_* surface, validated once, failing fast with every problem listed. -----------------
 QmConfig config;
@@ -117,6 +122,14 @@ SiteEndpoints.Map(app, webDir);
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
+}
+
+// Run startup initialization (database + first-run) BEFORE accepting requests.
+// This ensures /healthz only returns ok after the DB is ready and setup token is issued.
+using (var scope = app.Services.CreateScope())
+{
+    var initializer = scope.ServiceProvider.GetRequiredService<StartupInitializer>();
+    await initializer.StartAsync(CancellationToken.None);
 }
 
 // Fail fast on a second instance / bad data directory before binding the port.
