@@ -75,3 +75,21 @@ public sealed class MonitorSettingsRequestValidator : AbstractValidator<MonitorS
             .Must(n => max is null || n <= max).WithMessage($"Number must be less than or equal to {max}")
             .OverridePropertyName(path);
 }
+
+/// <summary><c>POST /ignored</c> body (strict).</summary>
+public sealed class IgnoreRequestValidator : AbstractValidator<IgnoreRequest>
+{
+    public IgnoreRequestValidator()
+    {
+        RuleFor(x => x.Kind).Cascade(CascadeMode.Stop).NotNull().WithMessage("Required")
+            .Must(k => k is "project" or "container").WithMessage("Invalid enum value. Expected 'project' | 'container'")
+            .OverridePropertyName("kind");
+        RuleFor(x => x.Name).Cascade(CascadeMode.Stop).NotNull().WithMessage("Required")
+            .Must(n => n!.Length >= 1).WithMessage("String must contain at least 1 character(s)")
+            .Must(n => n!.Length <= 255).WithMessage("String must contain at most 255 character(s)")
+            .OverridePropertyName("name");
+        RuleFor(x => x.Confirm).Cascade(CascadeMode.Stop).NotNull().WithMessage("Required")
+            .Must(n => n!.Length <= 255).WithMessage("String must contain at most 255 character(s)")
+            .OverridePropertyName("confirm");
+    }
+}

@@ -47,6 +47,25 @@ public static class MiscEndpoints
         api.MapGet("/operations/{id}", async (HttpContext http, string id, IOperationManager operations) =>
             await operations.GetAsync(id, http.RequestAborted) ?? throw AppException.NotFound("Operation"));
 
+        // "Stop monitoring" list (admin). Never touches Docker or files.
+        admin.MapGet("/ignored", (IIgnoreService ignored) => ignored.List());
+
+        admin.MapPost("/ignored", async (HttpContext http, IValidator<IgnoreRequest> validator, IIgnoreService ignored) =>
+        {
+            var body = await StrictJsonBody.ReadAsync(http, validator);
+            return Results.Json(await ignored.IgnoreAsync(body, http.ActorOf(), http.RequestAborted), statusCode: StatusCodes.Status201Created);
+        });
+
+        admin.MapDelete("/ignored/{id}", async (HttpContext http, string id, IIgnoreService ignored) =>
+        {
+            if (!long.TryParse(id, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var n) || n <= 0)
+            {
+                throw AppException.BadRequest("Invalid id");
+            }
+
+            return await ignored.RestoreAsync(n, http.ActorOf(), http.RequestAborted);
+        });
+
         api.MapGet("/monitors/settings", (HttpContext http, IMonitorSettingsService monitors) => monitors.GetAsync(http.RequestAborted));
 
         admin.MapPut("/monitors/settings", async (HttpContext http, IValidator<MonitorSettingsRequest> validator, IMonitorSettingsService monitors) =>

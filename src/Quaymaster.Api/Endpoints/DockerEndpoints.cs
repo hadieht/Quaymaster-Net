@@ -127,7 +127,7 @@ public static partial class DockerEndpoints
     private static void MapInventory(RouteGroupBuilder api)
     {
         api.MapGet("/images", (HttpContext http, IInventoryService inventory) => inventory.ListImagesAsync(http.RequestAborted));
-        api.MapGet("/images/{reference}", (HttpContext http, string reference, IInventoryService inventory) => inventory.InspectImageAsync(reference, http.RequestAborted));
+        api.MapGet("/images/{reference}", (HttpContext http, string reference, IInventoryService inventory) => inventory.InspectImageAsync(Uri.UnescapeDataString(reference), http.RequestAborted));
         api.MapGet("/volumes", (HttpContext http, IInventoryService inventory) => inventory.ListVolumesAsync(http.RequestAborted));
         api.MapGet("/volumes/{name}", (HttpContext http, string name, IInventoryService inventory) => inventory.InspectVolumeAsync(name, http.RequestAborted));
         api.MapGet("/networks", (HttpContext http, IInventoryService inventory) => inventory.ListNetworksAsync(http.RequestAborted));

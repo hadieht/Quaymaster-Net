@@ -66,6 +66,7 @@ public static class DockerDependencyInjection
         services.AddSingleton<IMutationGateway, MutationGateway>();
         services.AddSingleton<IIgnoreList, IgnoreList>();
         services.AddSingleton<IOperationManager, OperationManager>();
+        services.AddSingleton<IIgnoreService, IgnoreService>();
         services.AddSingleton<Func<IRecreator>>(sp => () => sp.GetRequiredService<IRecreator>());
         services.AddSingleton<IContainerService, ContainerService>();
         services.AddSingleton<ComposeService>();
