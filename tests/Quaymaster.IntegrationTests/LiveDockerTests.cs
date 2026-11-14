@@ -9,6 +9,7 @@ namespace Quaymaster.IntegrationTests;
 /// Mutations only ever touch a throwaway container labelled <c>quaymaster.test=true</c> that the test creates and removes.
 /// </summary>
 [Trait("Category", "Live")]
+[Collection("Live")]
 public sealed class LiveDockerTests : IDisposable
 {
     private const string Socket = "/var/run/docker.sock";

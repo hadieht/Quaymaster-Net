@@ -17,6 +17,7 @@ namespace Quaymaster.IntegrationTests;
 /// </list>
 /// </summary>
 [Trait("Category", "Live")]
+[Collection("Live")]
 public sealed class LiveStorageTests(ITestOutputHelper output) : IDisposable
 {
     private const string Socket = "/var/run/docker.sock";

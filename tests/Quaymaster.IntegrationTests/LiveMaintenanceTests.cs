@@ -12,7 +12,7 @@ namespace Quaymaster.IntegrationTests;
 /// without Docker with <c>--filter "Category!=Live"</c>; without a reachable daemon the test passes vacuously.
 /// </summary>
 [Trait("Category", "Live")]
-[Collection("LiveFixtureRegistry")]
+[Collection("Live")]
 public sealed class LiveMaintenanceTests(ITestOutputHelper output) : IDisposable
 {
     private const string Socket = "/var/run/docker.sock";

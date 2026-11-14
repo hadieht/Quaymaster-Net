@@ -347,7 +347,7 @@ Wire source of truth: `INotificationSink.Notify`; T5 replaces `AuditNotification
 failed health; pull failure touches nothing; prepare refusals; scheduler decisions + window gating; restart-loop window; monitor events + dedupe keys; sink cool-down; approval expiry via `RunService`) ·
 integration **+7 → 251 non-live** (`StandaloneAndStreamTests`: standalone contract/auth/validation/errors/read-only, full accepted run on the fake world, `/stream/maintenance` connect → snapshot →
 `run` → heartbeat → `end` on logout, run output stream replay, monitor loop with a capturing sink: `updates.available`, `maintenance.awaiting_approval`, `run.skipped` on expiry) · **live +2** (`LiveMaintenanceRunTests`,
-`[Trait("Category","Live")]`, `[Collection("LiveFixtureRegistry")]` shared with `LiveMaintenanceTests` so fixture-registry users never run in parallel).
+`[Trait("Category","Live")]`, `[Collection("Live")]` shared with `LiveMaintenanceTests` so fixture-registry users never run in parallel).
 
 **Live evidence (real daemon, `qmtest-upd`, scope `qmtest-*`)**: dry-run plan → create (awaiting_approval, same plan hash) → approve → run `completed` with all steps `succeeded`
 (preflight, validate, check, recovery_point, pull, impact, deploy [real `docker compose up --no-deps --pull never`], health, dependents, record) → `app` runs a **different image id** (`sha256:a836f68e…`) → restore (confirm
