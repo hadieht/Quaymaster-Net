@@ -61,6 +61,20 @@ public sealed partial class RunExecutor
     private async Task<IReadOnlyList<EngineContainer>> ServiceContainersAsync(string project, string service, CancellationToken ct) =>
         [.. (await env.ContainersAsync(ct)).Where(c => c.Project == project && c.Service == service)];
 
+    /// <summary>
+    /// The service's container set after a compose up: the daemon may still list the container compose just replaced
+    /// (stopped, pending removal). The health gate must see only what this deploy brought up — everything else is the
+    /// previous generation. If filtering leaves fewer containers than the deployment is expected to have (no recreate,
+    /// or a lagging daemon), the full list is kept so the gate fails against what is actually there, not against a
+    /// partial set.
+    /// </summary>
+    private static IReadOnlyList<EngineContainer> PostDeployLive(IReadOnlyCollection<string> previousIds, int expectedCount, IReadOnlyList<EngineContainer> all)
+    {
+        var previous = previousIds.ToHashSet(StringComparer.Ordinal);
+        var live = all.Where(c => !previous.Contains(c.Id)).ToList();
+        return live.Count >= expectedCount ? live : all;
+    }
+
     private async Task<Plan?> TryReplanAsync(PlanRequest request)
     {
         try
@@ -139,7 +153,7 @@ public sealed partial class RunExecutor
         var why = deploy.Why;
         if (deploy.Ok)
         {
-            var live = await ServiceContainersAsync(plan.Target, s.Service, ct);
+            var live = PostDeployLive([.. s.Containers.Select(c => c.Id)], s.Containers.Count, await ServiceContainersAsync(plan.Target, s.Service, ct));
             if (!s.WasRunning)
             {
                 // stays stopped: only assert that it was recreated on the expected image
@@ -300,7 +314,7 @@ public sealed partial class RunExecutor
                     return ((Ok: false, Why: dep.Detail), (JsonObject?)null, true);
                 }
 
-                var live = await ServiceContainersAsync(plan.Target, s.Service, ct);
+                var live = PostDeployLive([.. before.Select(c => c.Id)], before.Count, await ServiceContainersAsync(plan.Target, s.Service, ct));
                 if (!s.WasRunning)
                 {
                     var same = live.All(c => c.ImageId == oldId);
@@ -566,7 +580,7 @@ public sealed partial class RunExecutor
 
                     if (s.WasRunning)
                     {
-                        var live = await ServiceContainersAsync(plan.Target, service, ct);
+                        var live = PostDeployLive([.. before.Select(c => c.Id)], before.Count, await ServiceContainersAsync(plan.Target, service, ct));
                         var h = await health.WaitAsync([.. live.Select(c => c.Id)], SpecFor(s, p.ImageId), ct);
                         if (!h.Ok)
                         {

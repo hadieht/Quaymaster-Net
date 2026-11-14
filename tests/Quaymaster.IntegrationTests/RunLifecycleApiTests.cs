@@ -61,6 +61,15 @@ internal sealed class ScriptedEnv(RunEnvironment real, FakeDocker docker, Script
 
     public List<string> Ups { get; } = [];
 
+    /// <summary>
+    /// Models the daemon's recreate window: <c>up</c> creates a new container (new id), the replaced one lingers in the
+    /// container list a little longer but is no longer inspectable.
+    /// </summary>
+    public bool StaleRecreateWindow { get; set; }
+
+    /// <summary>Containers that still list but no longer inspect (the daemon is removing them).</summary>
+    public HashSet<string> Vanishing { get; } = new(StringComparer.Ordinal);
+
     private JsonObject Web => (JsonObject)docker.Containers[0]!;
 
     public Task<ProjectTarget> TargetAsync(string project, CancellationToken ct) => real.TargetAsync(project, ct);
@@ -74,6 +83,11 @@ internal sealed class ScriptedEnv(RunEnvironment real, FakeDocker docker, Script
 
     public Task<InspectLite?> InspectAsync(string containerId, CancellationToken ct)
     {
+        if (Vanishing.Contains(containerId))
+        {
+            return Task.FromResult<InspectLite?>(null);
+        }
+
         var c = docker.Containers.OfType<JsonObject>().First(x => x["Id"]!.GetValue<string>() == containerId);
         var image = c["ImageID"]!.GetValue<string>();
         var bad = Unhealthy.Contains(image);
@@ -86,7 +100,19 @@ internal sealed class ScriptedEnv(RunEnvironment real, FakeDocker docker, Script
         docker.ComposeRuns.Add(["compose", "up", service]);
         if (service == "web")
         {
-            Web["ImageID"] = images.Tags["nginx:1.27"];
+            if (StaleRecreateWindow)
+            {
+                Web["State"] = "exited";
+                Web["Status"] = "Exited (0) 5 seconds ago";
+                Vanishing.Add(Web["Id"]!.GetValue<string>());
+                var fresh = FakeDocker.Summary("d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4", "web", "nginx:1.27", "shop", "web", "running", "Up 10 seconds");
+                fresh["ImageID"] = images.Tags["nginx:1.27"];
+                docker.Containers.Add(fresh);
+            }
+            else
+            {
+                Web["ImageID"] = images.Tags["nginx:1.27"];
+            }
         }
 
         return Task.FromResult(new DeployResult(true, 0, string.Empty, ["compose", "up", service]));
@@ -199,6 +225,24 @@ public sealed class RunLifecycleApiTests : IDisposable
         (await h.Viewer.GetAsync("/maintenance/runs?limit=0")).Status.Should().Be(400);
         (await h.Viewer.GetAsync("/maintenance/runs/nope")).Status.Should().Be(404);
         (await h.Viewer.PostAsync("/maintenance/runs", new { project = "shop" })).Status.Should().Be(403);
+    }
+
+    [Fact]
+    public async Task A_recreate_whose_old_container_lingers_in_the_daemon_list_still_completes_the_run()
+    {
+        // The daemon can still list the container compose just replaced (stopped, pending removal) when the executor
+        // asks for the service's containers right after `up`. The health gate must gate on the new container only.
+        var h = await HarnessAsync();
+        _env.StaleRecreateWindow = true;
+        var (id, hash) = await CreateAsync(h);
+        (await ApproveAsync(h, id, hash)).Status.Should().Be(202);
+        var done = await WaitFinalAsync(h, id);
+
+        done.GetProperty("status").GetString().Should().Be("completed", done.ToString());
+        done.GetProperty("result").GetProperty("services")[0].GetProperty("outcome").GetString().Should().Be("updated");
+        var web = h.Docker.Containers.OfType<JsonObject>().First(c =>
+            ((JsonObject)c["Labels"]!)["com.docker.compose.service"]?.GetValue<string>() == "web" && c["ImageID"]!.GetValue<string>() == ScriptedImages.NewId);
+        web["State"]!.GetValue<string>().Should().Be("running");
     }
 
     [Fact]
