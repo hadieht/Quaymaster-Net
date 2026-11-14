@@ -210,3 +210,67 @@ CI without Docker: `dotnet test --filter "Category!=Live"`.
 - Pulls of private registries with credentials under a *different* host alias (e.g. `index.docker.io`) are not matched; use `registry-1.docker.io` for Docker Hub.
 - Preview state is process-local (single instance by design).
 - `DELETE /registries/credentials/:host` returns `{ok:true}` as the original; PUT echoes the host as typed but stores it lower-case.
+
+## T4a — maintenance configuration + dry-run planner (forge, 2026-11-14) — **COMPLETE**
+
+T4 domain layer (8847781) is unchanged. T4a adds policies, windows, schedules and the dry-run plan; the run lifecycle (T4b) and
+standalone/monitors/stream (T4c) are **not** here.
+
+**Endpoints** (`Api/Endpoints/MaintenanceEndpoints.cs`; reads = any authenticated user, writes = admin; wire format of `shared/src/maintenance.ts`)
+- `GET /maintenance/policies` → `{policies:[{scopeKind,scopeKey,policy,updatedAt}]}` · `GET /maintenance/policies/effective?project&service&container` → `EffectivePolicy`
+- `PUT|DELETE /maintenance/policies/:kind/:key` (kind = global|project|service|container; `:key` is URL-decoded, `shop%2Fweb`; global is always keyed `*`) → PUT `{scopeKind,scopeKey,policy}`, DELETE `{ok:true}`
+- `GET /maintenance/windows` → `{windows:[…openNow,nextStart]}` · `POST` (201) · `PUT /:id` · `DELETE /:id`
+- `GET /maintenance/schedules` → `{schedules:[…nextRuns[3]]}` · `POST` (201) · `PUT /:id` · `DELETE /:id`
+- `POST /maintenance/plan {project, services?, applyDrift?, allowUnhealthy?}` → `RunDetail` (run fields flattened + `plan` + `steps`), stored as a `dry_run` run, status `planned`
+
+**What was built**
+- Application (`Application/Maintenance/`): `Stores.cs` (`IPolicyStore`, `IWindowStore`, `IScheduleStore`, `IRunStore` + records), `Dtos.cs`, `Validators.cs`
+  (FluentValidation, zod-style messages, strict bodies), `PolicyService` (also `IPolicyResolver`, `IProbeVerifier` abstraction), `WindowService`,
+  `ScheduleService` (in `WindowAndScheduleServices.cs`), `PlannerService : IPlanService` (`PlanService.cs`; the class is named `PlannerService` because
+  `Domain.Maintenance.PlanService` is the plan's per-service record).
+- `IComposeService` gained `PlanContextAsync` (summary + validation + unredacted resolved config + live containers) and `HashesAndDriftAsync`
+  (`compose config --hash` + drift decision) — read-only, no new mutation path.
+- Infrastructure: `Persistence/Repositories/MaintenanceStores.cs` (SQL against the Baseline tables `policies`, `windows`, `schedules`, `runs`, `run_steps`;
+  stored JSON bodies are the original's), `HttpProbeVerifier`; DI in `DockerDependencyInjection.cs`. Api: wiring only (`Program.cs`: `MaintenanceEndpoints.Map(api)`;
+  `StrictJsonBody.ParseAsync` made public for the raw policy body).
+
+**Decisions**
+- **Read-only mode** does not block policy/window/schedule CRUD or the dry run at the endpoint (as the original: only run create/approve/restore check it). It
+  does show up in the plan: the guard's read-only refusal becomes `blocked:{code:"refused"}` (original `empty('refused', …)`), nothing is mutated. All writes
+  are audited through `IMutationGateway.AuditedAsync` (`maintenance.policy.put|delete`, `maintenance.window.create|update|delete`, `maintenance.schedule.*`,
+  `maintenance.dry_run`). Policy for a name outside `QM_MANAGED_SCOPE` → 409 `out_of_scope`.
+- **Probe**: a policy with `health.probe` is only saved after `IProbeVerifier` got the expected status (5 s, no redirects) — 400 `validation` otherwise.
+- **Unique names**: windows and schedules have UNIQUE(name) in the schema; the services answer 409 `conflict` instead of a 500. Deleting a window used by a schedule → 409.
+- **`maxParallel`** accepts only `1` (domain rule from the original). `requireApproval` is OR-combined only through `critical`/explicit flags (no implicit force).
+- **Plan blocked codes** (kept in `plan.blocked`, HTTP stays 200): `refused`, `limited_capability`, `validation`, `cycle`, `out_of_scope`/`self_protected`/`read_only`
+  (project refs), `preflight`, `blocked_drift`, `nothing_to_do`. Unknown project is 404 (thrown by discovery), a bad body 400.
+- Plan semantics are the original `planner.ts` 1:1: candidates only for `update_available|update_staged` with a remote digest; `ignore`, `build:`, self container,
+  scope/protected refusals, up-to-date, never-created are `excluded` with a reason; namespace/volume dependents join with `role:"dependent"`; ordering via
+  `ServiceOrdering` (deps first, `updateOrder`, name); disk check fail-closed (2.5 × compressed + max(floor, 10 %)); shared-tag containers (incl. ones hidden by
+  the visible scope) are listed/warned and fenced by the managed scope; `planHash` from `PlanHasher` (volatile data excluded).
+- The plan uses `IUpdateService.StatusesAsync(fresh: true)` (one throttled registry pass for all images in use) and matches `ref` + running image id.
+
+**Tests (T4a)**: unit **+10 → 397** (`MaintenanceConfigServiceTests`: policy merge/sources/%2F/scope/probe, window openNow/nextStart across the Berlin spring-forward,
+schedule next runs across the gap (02:30 → once at 03:00 CEST), validation rules; `PlannerInputsTests`: topo order of a resolved Compose config incl. namespace
+edge + cycle, drift detection, plan-hash staleness/diff — on top of the 40 domain tests from 8847781) · integration **+20 → 232 non-live** (`MaintenanceConfigApiTests`: CRUD
+contracts for policies/windows/schedules incl. auth (viewer 403, anon 401), 201s, 400/404/409 codes, audit entry; plan shape with all steps, stored run, hash stability,
+digest change, drift block/`applyDrift`, ignore policy, services filter, dependency order, unknown project, out-of-scope, read-only, low disk) · live **+1 → 233 total**
+(`LiveMaintenanceTests`, `[Trait("Category","Live")]`: brings up `qmtest-upd`, publishes app v2, effective policy merge, real out_of_scope, dry-run plan with the real
+`compose config --hash`, digest from the fixture registry, healthcheck-kind, dependents, identical hash on re-plan, container ids/start times unchanged, torn down in `finally`).
+Totals: **397 unit + 233 integration, 0 failed**; `dotnet build --no-incremental` 0 warnings, `npm run build` green, `web/` untouched.
+
+**What T4b must know (hooks)**
+- `IPlanService.PlanProjectAsync(PlanRequest, ct)` is the re-plan at the executor's preflight: compare `Plan.PlanHash` with the approved one
+  (`PlanHasher.Compute`, `PlanHasher.DescribeDiff` for the `approval_stale` reason). `PlanRequest` already carries `ScheduleMode` and `OnlyModes` (scheduled runs: `["auto"]`),
+  `AllowUnhealthy`, `ApplyDrift`, `Fresh`. `IPlanService.DryRunAsync` shows how a run row + audit entry are written.
+- `IRunStore` (insert + get-with-steps) is deliberately minimal: T4b adds status transitions (`planned→approved→running→…`), step appends, list/filter, `recover()`;
+  the `runs`/`run_steps` DDL and the row classes (`RunSqlRow`, `RunStepSqlRow`) are in `MaintenanceStores.cs`. `RunDetailDto.From(RunDetail)` is the wire mapper.
+- `IPolicyResolver.ResolveAsync(project, service, container)` for per-service policy at execution time; `PlanService.Unattended.Blockers` already encode the RT-23 truth table.
+- `IScheduleStore.SetCursorAsync` + `schedule_occurrences` (deleted with the schedule) are ready for the scheduler tick; `TimeMath.NextOccurrences(cron, tz, afterMs, n)`
+  and `TimeMath.WindowAt/NextWindowStart` are the DST-safe primitives (`WindowRecord.Def` converts a stored window).
+- `IComposeService.PlanContextAsync` / `HashesAndDriftAsync` are read-only; the executor still needs its own up/pull/tag steps through `IMutationGateway`/`IImageOps`.
+  The maintenance gate (`assertNotUnderMaintenance`) is still not wired into T2/T3 mutations (hook: `MutationGateway.EnsureWritableAsync`).
+
+**Known limits**: no `GET /maintenance/runs*` yet (T4b); a dry run stores its plan but exposes it only in the POST response; plan generation calls `StatusesAsync(fresh:true)`
+for the whole host (acceptable for a manual dry run, T4b scheduled planning should pass `Fresh=false` where the cache is enough); policy keys are decoded with
+`Uri.UnescapeDataString` (a literal `%` in a container name key must be sent as `%25`).
