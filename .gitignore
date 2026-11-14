@@ -1,0 +1,32 @@
+# .NET
+bin/
+obj/
+*.user
+.vs/
+.vscode/
+TestResults/
+artifacts/
+publish/
+
+# Node / frontend
+node_modules/
+web/dist/
+shared/dist/
+coverage/
+e2e/.playwright/
+e2e/test-results/
+playwright-report/
+
+# Data and secrets
+*.db
+*.db-wal
+*.db-shm
+setup-token
+.env
+.local/
+*.pem
+*.pfx
+
+# OS
+.DS_Store
+Thumbs.db

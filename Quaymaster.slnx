@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Quaymaster.Api/Quaymaster.Api.csproj" />
+    <Project Path="src/Quaymaster.Application/Quaymaster.Application.csproj" />
+    <Project Path="src/Quaymaster.Domain/Quaymaster.Domain.csproj" />
+    <Project Path="src/Quaymaster.Infrastructure/Quaymaster.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Quaymaster.IntegrationTests/Quaymaster.IntegrationTests.csproj" />
+    <Project Path="tests/Quaymaster.UnitTests/Quaymaster.UnitTests.csproj" />
+  </Folder>
+</Solution>

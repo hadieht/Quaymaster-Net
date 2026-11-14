@@ -1,0 +1,10 @@
+node_modules
+dist
+coverage
+bin
+obj
+package-lock.json
+docs/reviews
+test-fixtures
+AGENTS.md
+Quaymaster.sln

@@ -1,0 +1,25 @@
+# Local development stack. The backend talks to the host Docker daemon via the
+# mounted socket; the image runs as uid 10001 with the docker group grafted on.
+#   docker compose --env-file .env.example up --build
+services:
+  quaymaster-net:
+    build: .
+    image: quaymaster-net:dev
+    container_name: quaymaster-net
+    ports:
+      - "${QM_PORT:-8787}:8787"
+    environment:
+      QM_DATA_DIR: /var/lib/quaymaster-net
+      QM_HOST: 0.0.0.0
+      QM_PORT: "8787"
+      QM_STACK_PATHS: /srv/stacks
+    group_add:
+      - "${DOCKER_GID:-0}"
+    volumes:
+      - qmdata:/var/lib/quaymaster-net
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./test-fixtures:/srv/stacks:ro
+    restart: unless-stopped
+
+volumes:
+  qmdata:

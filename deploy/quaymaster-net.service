@@ -1,0 +1,32 @@
+# Native (non-container) mode for the .NET build. See docs/DEPLOY.md.
+[Unit]
+Description=Quaymaster (.NET) Docker dashboard
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=quaymaster
+Group=quaymaster
+SupplementaryGroups=docker
+WorkingDirectory=/opt/quaymaster-net
+EnvironmentFile=/etc/quaymaster-net.env
+Environment=QM_DATA_DIR=/var/lib/quaymaster-net
+ExecStart=/usr/bin/dotnet /opt/quaymaster-net/Quaymaster.Api.dll
+Restart=on-failure
+RestartSec=5
+# Hardening. Compose projects must stay writable: list every stack directory in ReadWritePaths.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/quaymaster-net /opt/stacks
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target
