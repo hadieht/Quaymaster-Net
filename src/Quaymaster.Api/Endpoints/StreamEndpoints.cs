@@ -124,5 +124,54 @@ public static class StreamEndpoints
 
             return new SseResult(conn);
         });
+
+        // Run progress: `snapshot` (one per recent run, oldest first), then `run` whenever a run changes (polled every 2 s).
+        api.MapGet("/stream/maintenance", async (HttpContext http, ISseHub hub, Application.Streaming.IMaintenanceStreamFeed feed) =>
+        {
+            var conn = hub.Open(http.RequireAuth());
+            await feed.AttachAsync(conn, http.RequestAborted);
+            return new SseResult(conn);
+        });
+
+        // Live output of one run. A run id is also its operation id, so this is /stream/operations/:id with the run checked first;
+        // a run whose operation record is gone (older than the operation history, or from before a restart) answers with its final status.
+        api.MapGet("/stream/maintenance/runs/{id}", async (HttpContext http, string id, ISseHub hub, IOperationManager operations, Application.Maintenance.IRunService runs) =>
+        {
+            var run = await runs.GetAsync(id, http.RequestAborted);
+            var conn = hub.Open(http.RequireAuth());
+            if (await operations.GetAsync(id, http.RequestAborted) is null)
+            {
+                conn.Send("status", new { status = run.Status, error = run.Reason });
+                conn.Close("operation finished");
+                return new SseResult(conn);
+            }
+
+            var sub = await operations.SubscribeAsync(
+                id,
+                e =>
+                {
+                    switch (e)
+                    {
+                        case OperationEvent.Output o:
+                            conn.Send("output", new { text = o.Text });
+                            break;
+                        case OperationEvent.Status s:
+                            conn.Send("status", new { status = s.State, error = s.Error });
+                            if (s.State != "running")
+                            {
+                                _ = Task.Delay(50).ContinueWith(_ => conn.Close("operation finished"), TaskScheduler.Default);
+                            }
+
+                            break;
+                    }
+                },
+                http.RequestAborted);
+            if (sub is not null)
+            {
+                conn.OnClose(sub.Dispose);
+            }
+
+            return new SseResult(conn);
+        });
     }
 }

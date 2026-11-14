@@ -233,10 +233,10 @@ public sealed partial class Monitors(
             deliberate = lastStop != default && now - lastStop < TimeSpan.FromSeconds(15);
 
             // restart loop detection counts every die, deliberate or not
-            var list = (_diedAt.GetValueOrDefault(ev.ActorId) ?? []).Where(t => now - t < TimeSpan.FromSeconds(s.RestartLoopWindowSeconds)).ToList();
-            list.Add(now);
-            _diedAt[ev.ActorId] = list;
-            loopCount = list.Count;
+            var (window, isLoop) = Domain.Maintenance.RestartLoop.Record(_diedAt.GetValueOrDefault(ev.ActorId) ?? [], now, TimeSpan.FromSeconds(s.RestartLoopWindowSeconds), s.RestartLoopCount);
+            _diedAt[ev.ActorId] = [.. window];
+            loopCount = window.Count;
+            _ = isLoop;
         }
 
         if (loopCount >= s.RestartLoopCount)

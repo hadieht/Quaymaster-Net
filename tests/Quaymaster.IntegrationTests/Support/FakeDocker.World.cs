@@ -240,6 +240,49 @@ public sealed partial class FakeDocker
         return Task.FromResult(true);
     }
 
+    public Task<string> CreateContainerAsync(string name, JsonObject body, CancellationToken ct)
+    {
+        lock (Mutations)
+        {
+            Mutations.Add($"create {name} image={body["Image"]}");
+        }
+
+        return Task.FromResult(CloneId);
+    }
+
+    public Task ConnectNetworkAsync(string network, string containerId, JsonObject endpoint, CancellationToken ct)
+    {
+        lock (Mutations)
+        {
+            Mutations.Add($"connect {network} {ShortOf(containerId)}");
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task RenameContainerAsync(string containerId, string newName, CancellationToken ct)
+    {
+        lock (Mutations)
+        {
+            Mutations.Add($"rename {ShortOf(containerId)} {newName}");
+        }
+
+        return Task.CompletedTask;
+    }
+
+    public Task SetRestartPolicyAsync(string containerId, string policy, int maximumRetryCount, CancellationToken ct)
+    {
+        lock (Mutations)
+        {
+            Mutations.Add($"restart-policy {ShortOf(containerId)} {policy}:{maximumRetryCount}");
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>The id the fake daemon hands out for a created clone.</summary>
+    public static readonly string CloneId = new('c', 64);
+
     public Task PullImageAsync(ImagePull request, IProgress<PullProgress>? progress, CancellationToken ct)
     {
         Up();

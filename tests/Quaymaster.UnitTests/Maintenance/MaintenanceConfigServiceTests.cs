@@ -50,6 +50,12 @@ internal sealed class RecordingGateway(SafetyPolicy policy) : IMutationGateway
 
     public Task RemoveNetworkAsync(string id, string name, CancellationToken ct) => throw new NotSupportedException();
 
+    public Task<string> CreateCloneAsync(ContainerRef source, string cloneName, JsonObject body, CancellationToken ct) => throw new NotSupportedException();
+    public Task ConnectCloneNetworkAsync(ContainerRef source, string cloneId, string network, JsonObject endpoint, CancellationToken ct) => throw new NotSupportedException();
+    public Task RenameContainerAsync(ContainerRef container, string newName, CancellationToken ct) => throw new NotSupportedException();
+    public Task SetRestartPolicyAsync(ContainerRef container, string policy, int maximumRetryCount, CancellationToken ct) => throw new NotSupportedException();
+    public Task<bool> ExecuteOnCloneAsync(ContainerRef source, ContainerCommand command, CancellationToken ct) => throw new NotSupportedException();
+
     public Task<ComposeRunResult> RunComposeAsync(IReadOnlyList<string> argv, ComposeRunOptions? options, CancellationToken ct) => throw new NotSupportedException();
 }
 

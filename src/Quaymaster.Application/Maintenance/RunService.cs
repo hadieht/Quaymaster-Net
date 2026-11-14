@@ -75,7 +75,24 @@ public sealed class RunService(
         return RunDetailDto.From(await runs.GetAsync(id, ct) ?? throw AppException.NotFound("Run"));
     }
 
-    public async Task<int> ExpireApprovalsAsync(CancellationToken ct) => (await runs.ExpireApprovalsAsync(Now(), ct)).Count;
+    public async Task<int> ExpireApprovalsAsync(CancellationToken ct)
+    {
+        var expired = await runs.ExpireApprovalsAsync(Now(), ct);
+        foreach (var r in expired)
+        {
+            notify.Notify(new NotificationEvent(
+                "run.skipped",
+                "info",
+                $"Approval expired: {r.Target}",
+                $"The update request {r.Id} was not approved in time and was skipped.",
+                $"expired:{r.Id}",
+                null,
+                new Dictionary<string, object?> { ["run"] = r.Id, ["target"] = r.Target, ["status"] = RunStatuses.Skipped }));
+            await AuditAsync(new Actor("system", null), "maintenance.run.expired", r.Target, new { run = r.Id });
+        }
+
+        return expired.Count;
+    }
 
     private static AppException ReadOnly(string reason) => new(409, ErrorCode.ReadOnly, $"Read-only mode: {reason}");
 
@@ -187,7 +204,7 @@ public sealed class RunService(
 
         if (ApprovalRules.IsExpired(meta.ApprovalExpiresAt, Now()))
         {
-            await runs.ExpireApprovalsAsync(Now(), ct);
+            await ExpireApprovalsAsync(ct);
             throw AppException.Conflict("The approval request has expired; create a new run");
         }
 
@@ -275,6 +292,11 @@ public sealed class RunService(
         if (run.Kind != "update")
         {
             throw AppException.BadRequest("Only update runs have recovery points");
+        }
+
+        if (run.PlanHash is null)
+        {
+            throw AppException.Conflict("Standalone runs are restored by hand: the previous container is kept stopped under its -qm-old-<time> name (see the run's reason for the commands)");
         }
 
         if (body.Confirm != run.Target)
