@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Quaymaster.IntegrationTests.Support;
 
 namespace Quaymaster.IntegrationTests.Support;
@@ -28,7 +29,7 @@ public sealed class DockerHarness : IDisposable
 
     public ApiClient LogsViewer { get; }
 
-    public static async Task<DockerHarness> CreateAsync(Dictionary<string, string>? settings = null, FakeDocker? docker = null, FakeRegistry? registry = null)
+    public static async Task<DockerHarness> CreateAsync(Dictionary<string, string>? settings = null, FakeDocker? docker = null, FakeRegistry? registry = null, Action<IServiceCollection>? configure = null)
     {
         docker ??= new FakeDocker();
         registry ??= new FakeRegistry();
@@ -46,6 +47,7 @@ public sealed class DockerHarness : IDisposable
         {
             docker.Install(services);
             registry.Install(services);
+            configure?.Invoke(services);
         });
         var admin = await factory.NewAdminAsync();
         (await admin.PostAsync("/users", new { username = "viewer", password = "viewer password 1", role = "viewer" })).Status.Should().Be(201);
