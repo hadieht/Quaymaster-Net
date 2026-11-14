@@ -252,7 +252,7 @@ standalone/monitors/stream (T4c) are **not** here.
 
 **Tests (T4a)**: unit **+10 → 397** (`MaintenanceConfigServiceTests`: policy merge/sources/%2F/scope/probe, window openNow/nextStart across the Berlin spring-forward,
 schedule next runs across the gap (02:30 → once at 03:00 CEST), validation rules; `PlannerInputsTests`: topo order of a resolved Compose config incl. namespace
-edge + cycle, drift detection, plan-hash staleness/diff — on top of the 40 domain tests from 8847781) · integration **+20 → 232 non-live** (`MaintenanceConfigApiTests`: CRUD
+edge + cycle, drift detection, plan-hash staleness/diff — on top of the 40 domain tests from 8847781) · integration **+20 → 227 non-live** (`MaintenanceConfigApiTests`: CRUD
 contracts for policies/windows/schedules incl. auth (viewer 403, anon 401), 201s, 400/404/409 codes, audit entry; plan shape with all steps, stored run, hash stability,
 digest change, drift block/`applyDrift`, ignore policy, services filter, dependency order, unknown project, out-of-scope, read-only, low disk) · live **+1 → 233 total**
 (`LiveMaintenanceTests`, `[Trait("Category","Live")]`: brings up `qmtest-upd`, publishes app v2, effective policy merge, real out_of_scope, dry-run plan with the real
