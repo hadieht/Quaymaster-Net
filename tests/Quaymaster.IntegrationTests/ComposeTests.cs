@@ -165,6 +165,32 @@ public sealed class ComposeTests : IDisposable
     }
 
     [Fact]
+    public async Task Limited_Projects_Only_Allow_Start_Stop_Restart_Via_The_Engine_Api()
+    {
+        var h = await HarnessAsync();
+        var ext = FakeDocker.Summary(new string('f', 64), "ext-app", "alpine:3", "ext", "app", "running", "Up 1 hour");
+        ext["Labels"]!["com.docker.compose.project.working_dir"] = "/opt/ext";
+        ext["Labels"]!["com.docker.compose.project.config_files"] = "/opt/ext/compose.yaml";
+        h.Docker.Containers.Add(ext);
+
+        var projects = await h.Viewer.GetAsync("/compose/projects");
+        var p = projects.Json.EnumerateArray().Single(x => x.GetProperty("name").GetString() == "ext");
+        p.GetProperty("level").GetString().Should().Be("limited");
+        p.GetProperty("reasons").GetArrayLength().Should().BeGreaterThan(0);
+
+        var up = await h.Admin.PostAsync("/compose/projects/ext/actions/up", new { });
+        up.Status.Should().BeOneOf(409, 422);
+        h.Docker.ComposeRuns.Where(a => a.Contains("up")).Should().BeEmpty();
+        (await h.Viewer.GetAsync("/compose/projects/ext/config")).Status.Should().BeOneOf(409, 422);
+
+        var restart = await h.Admin.PostAsync("/compose/projects/ext/actions/restart", new { });
+        restart.Status.Should().Be(202, restart.Body);
+        await WaitOperationAsync(h.Admin, restart.Json.GetProperty("operationId").GetString()!);
+        h.Docker.Commands.Should().Contain(c => c.Action == Quaymaster.Application.Docker.ContainerAction.Restart);
+        h.Docker.ComposeRuns.Where(a => a.Contains("restart")).Should().BeEmpty("limited projects go through the Engine API, not Compose");
+    }
+
+    [Fact]
     public async Task Read_Only_Refuses_Compose_Actions()
     {
         var h = await HarnessAsync(new() { ["QM_READ_ONLY"] = "true" });
