@@ -25,7 +25,7 @@ public sealed class SecretBox : ISecretBox
             throw new ArgumentException("secret key must be at least 32 bytes", nameof(masterKey));
         }
 
-        _key = HKDF.DeriveKey(HashAlgorithmName.SHA256, masterKey.ToArray(), 32, Encoding.UTF8.GetBytes("secrets-v1"), Encoding.UTF8.GetBytes("quaymaster"));
+        _key = HKDF.DeriveKey(HashAlgorithmName.SHA256, masterKey.ToArray(), 32, Encoding.UTF8.GetBytes("quaymaster"), Encoding.UTF8.GetBytes("secrets-v1"));
         KeyId = Convert.ToHexStringLower(SHA256.HashData(_key))[..8];
     }
 

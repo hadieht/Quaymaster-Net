@@ -12,7 +12,7 @@ namespace Quaymaster.IntegrationTests.Support;
 /// One in-memory Docker world behind every seam (engine reads, lifecycle commands, the Compose CLI, stack files, self probe,
 /// host probe). Integration tests drive the real HTTP pipeline against it; nothing touches a daemon.
 /// </summary>
-public sealed class FakeDocker : IDockerEngine, IDockerCommands, IComposeCli, IStackFiles, ISelfProbe, IHostProbe
+public sealed partial class FakeDocker : IDockerEngine, IDockerCommands, IComposeCli, IStackFiles, ISelfProbe, IHostProbe
 {
     public const string WebId = "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1";
     public const string DbId = "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2";
@@ -143,83 +143,6 @@ public sealed class FakeDocker : IDockerEngine, IDockerCommands, IComposeCli, IS
         });
     }
 
-    public Task<JsonArray> ListImagesAsync(CancellationToken ct) =>
-        Task.FromResult(new JsonArray(new JsonObject
-        {
-            ["Id"] = "sha256:" + new string('e', 64),
-            ["RepoTags"] = new JsonArray("nginx:1.27"),
-            ["RepoDigests"] = new JsonArray("nginx@sha256:" + new string('d', 64)),
-            ["Created"] = 1_700_000_000,
-            ["Size"] = 123456,
-            [ContainersKey] = 1,
-        }));
-
-    public List<string> ImageRefsAsked { get; } = [];
-
-    public Task<JsonObject?> InspectImageAsync(string reference, CancellationToken ct)
-    {
-        ImageRefsAsked.Add(reference);
-        return Task.FromResult<JsonObject?>(reference is "nginx:1.27" or "reg.io/team/app:tag" or "sha256:" + "eeee"
-            ? new JsonObject
-            {
-                ["Id"] = "sha256:" + new string('e', 64),
-                ["RepoTags"] = new JsonArray(reference),
-                ["Created"] = "2026-01-01T00:00:00Z",
-                ["Size"] = 123456,
-                ["Config"] = new JsonObject { ["Env"] = new JsonArray("API_TOKEN=" + Secret), ["Labels"] = new JsonObject() },
-            }
-            : null);
-    }
-
-    public Task<JsonObject> ListVolumesAsync(CancellationToken ct) =>
-        Task.FromResult(new JsonObject
-        {
-            ["Volumes"] = new JsonArray(new JsonObject
-            {
-                ["Name"] = "shop_data",
-                ["Driver"] = "local",
-                ["Mountpoint"] = "/var/lib/docker/volumes/shop_data/_data",
-                ["CreatedAt"] = "2026-01-01T00:00:00Z",
-                ["Labels"] = new JsonObject { ["com.docker.compose.project"] = "shop" },
-                ["Scope"] = "local",
-            }),
-        });
-
-    public Task<JsonObject?> InspectVolumeAsync(string name, CancellationToken ct) =>
-        Task.FromResult<JsonObject?>(name == "shop_data"
-            ? new JsonObject { ["Name"] = "shop_data", ["Driver"] = "local", ["Mountpoint"] = "/x", ["Labels"] = new JsonObject(), ["Scope"] = "local" }
-            : null);
-
-    public Task<JsonArray> ListNetworksAsync(CancellationToken ct) =>
-        Task.FromResult(new JsonArray(new JsonObject
-        {
-            ["Id"] = new string('9', 64),
-            ["Name"] = "shop_default",
-            ["Driver"] = "bridge",
-            ["Scope"] = "local",
-            ["Internal"] = false,
-            ["Labels"] = new JsonObject { ["com.docker.compose.project"] = "shop" },
-            ["IPAM"] = new JsonObject { ["Config"] = new JsonArray() },
-            ["Created"] = "2026-01-01T00:00:00Z",
-        }));
-
-    public Task<JsonObject?> InspectNetworkAsync(string reference, CancellationToken ct) =>
-        Task.FromResult<JsonObject?>(reference == "shop_default"
-            ? new JsonObject { ["Id"] = new string('9', 64), ["Name"] = "shop_default", ["Driver"] = "bridge", [ContainersKey] = new JsonObject(), ["Labels"] = new JsonObject() }
-            : null);
-
-    public Task<JsonObject> DiskUsageAsync(string type, CancellationToken ct)
-    {
-        Interlocked.Increment(ref _dfCalls);
-        return Task.FromResult(type switch
-        {
-            "container" => new JsonObject { ["ContainersDiskUsage"] = new JsonObject { ["TotalSize"] = 10, ["Reclaimable"] = 1, ["TotalCount"] = 3, ["ActiveCount"] = 2 } },
-            "image" => new JsonObject { ["ImagesDiskUsage"] = new JsonObject { ["TotalSize"] = 100, ["Reclaimable"] = 50, ["TotalCount"] = 1, ["ActiveCount"] = 1 } },
-            "volume" => new JsonObject { ["VolumesDiskUsage"] = new JsonObject { ["TotalSize"] = 20, ["Reclaimable"] = 0, ["TotalCount"] = 1, ["ActiveCount"] = 1 } },
-            _ => new JsonObject { ["BuildCacheDiskUsage"] = new JsonObject { ["TotalSize"] = 5, ["Reclaimable"] = 5, ["TotalCount"] = 0, ["ActiveCount"] = 0 } },
-        });
-    }
-
     public async IAsyncEnumerable<LogFrame> LogsAsync(string containerId, bool tty, LogRequest request, [EnumeratorCancellation] CancellationToken ct)
     {
         Up();
@@ -280,16 +203,6 @@ public sealed class FakeDocker : IDockerEngine, IDockerCommands, IComposeCli, IS
 
     // ---- IDockerCommands --------------------------------------------------------------------------------------------
 
-    public Task<bool> ExecuteAsync(ContainerCommand command, CancellationToken ct)
-    {
-        lock (Commands)
-        {
-            Commands.Add(command);
-        }
-
-        return Task.FromResult(true);
-    }
-
     // ---- IComposeCli ------------------------------------------------------------------------------------------------
 
     public Task<ComposeRunResult> RunAsync(IReadOnlyList<string> argv, ComposeRunOptions options, CancellationToken ct)
@@ -341,7 +254,6 @@ public sealed class FakeDocker : IDockerEngine, IDockerCommands, IComposeCli, IS
 
     public double UptimeSeconds() => 12345;
 
-    public (long Total, long Free) Statfs(string path) => (1000, 400);
 
     /// <summary>Replaces every seam in the host with this fake.</summary>
     public void Install(IServiceCollection services)
