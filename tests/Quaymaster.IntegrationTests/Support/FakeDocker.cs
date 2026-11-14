@@ -239,8 +239,43 @@ public sealed class FakeDocker : IDockerEngine, IDockerCommands, IComposeCli, IS
 
     public async IAsyncEnumerable<JsonObject> EventsAsync(DateTimeOffset since, [EnumeratorCancellation] CancellationToken ct)
     {
-        await Task.Delay(Timeout.Infinite, ct).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-        yield break;
+        while (true)
+        {
+            if (!_eventFeed.Reader.TryRead(out var next))
+            {
+                Volatile.Write(ref _eventsHandled, _eventsYielded);
+                if (!await _eventFeed.Reader.WaitToReadAsync(ct))
+                {
+                    yield break;
+                }
+
+                continue;
+            }
+
+            _eventsYielded++;
+            yield return next;
+        }
+    }
+
+    private readonly System.Threading.Channels.Channel<JsonObject> _eventFeed = System.Threading.Channels.Channel.CreateUnbounded<JsonObject>();
+    private long _eventsPushed;
+    private long _eventsYielded;
+    private long _eventsHandled;
+
+    /// <summary>Queues a raw daemon event for the (real) EventWatcher to consume.</summary>
+    public void PushEvent(JsonObject raw)
+    {
+        Interlocked.Increment(ref _eventsPushed);
+        _eventFeed.Writer.TryWrite(raw);
+    }
+
+    /// <summary>Completes once the watcher has fully handled every pushed event.</summary>
+    public async Task WaitEventsHandledAsync()
+    {
+        for (var i = 0; i < 500 && Volatile.Read(ref _eventsHandled) < Volatile.Read(ref _eventsPushed); i++)
+        {
+            await Task.Delay(10);
+        }
     }
 
     // ---- IDockerCommands --------------------------------------------------------------------------------------------

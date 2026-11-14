@@ -144,6 +144,27 @@ public sealed class ComposeTests : IDisposable
     }
 
     [Fact]
+    public async Task Drifted_Configuration_Blocks_Redeploy_Until_ApplyDrift()
+    {
+        var h = await HarnessAsync();
+        h.Docker.ComposeHandler = argv => argv.Contains("--hash") || argv.Any(a => a.StartsWith("--hash", StringComparison.Ordinal))
+            ? new(0, "web 0123456789abcdef0123\ndb 0123456789abcdef0123\n", string.Empty, false)
+            : new(0, argv.Contains("ls") ? "[]" : argv.Contains("config") ? FakeDocker.DefaultConfigJson : string.Empty, string.Empty, false);
+
+        var blocked = await h.Admin.PostAsync("/compose/projects/shop/actions/redeploy", new { });
+        blocked.Status.Should().Be(409, blocked.Body);
+        blocked.ErrorCode.Should().Be("blocked_drift");
+        var details = blocked.Json.GetProperty("error").GetProperty("details");
+        details.GetProperty("field").GetString().Should().Be("applyDrift");
+        details.GetProperty("services").GetArrayLength().Should().BeGreaterThan(0);
+        details.TryGetProperty("redactedConfig", out _).Should().BeTrue();
+        h.Docker.ComposeRuns.Where(a => a.Contains("up")).Should().BeEmpty();
+
+        var applied = await h.Admin.PostAsync("/compose/projects/shop/actions/redeploy", new { applyDrift = true });
+        applied.Status.Should().Be(202, applied.Body);
+    }
+
+    [Fact]
     public async Task Read_Only_Refuses_Compose_Actions()
     {
         var h = await HarnessAsync(new() { ["QM_READ_ONLY"] = "true" });
