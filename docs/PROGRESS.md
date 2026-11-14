@@ -98,12 +98,10 @@ tests: Microsoft.Extensions.TimeProvider.Testing 10.5.0. Tool: `dotnet-ef` 10.0.
 **Known limits**: no `GET /audit` yet; `SecretBox` (AES-GCM) not ported (needed by notifications/registry phases); login limiter state is in
 memory (same as the original); redaction module not ported; `Kestrel` 431/400 protocol-level rejections are not enveloped.
 
-## T2 — Docker core: containers, compose, system, events, operations, SSE (forge, 2026-11-14) — **PARTIAL: implementation done, tests NOT yet written**
+## T2 — Docker core: containers, compose, system, events, operations, SSE (forge, 2026-11-14) — **COMPLETE**
 
 **Status**: all T2 endpoints are implemented and were exercised live against the real daemon (`scripts/smoke-t2.sh`, read-only
 posture). `dotnet build --no-incremental` = 0 warnings / 0 errors; the T1 suites still pass (183 unit + 56 integration).
-**Missing (must be done next): the T2 unit tests, the faked-`IDockerEngine` integration tests, the `[Trait("Category","Live")]` tests,
-`npm run build` re-run, the final live-smoke assertions as checks.**
 
 **Endpoints** (`/api/v1`): `GET /system/mode|health|info|host|df[?refresh=1]` · `GET /containers`, `/containers/:ref`, `/:ref/logs` (logs:read),
 `/:ref/stats`, `/:ref/stats/history?minutes`, `POST /containers/:ref/actions/:action` (admin) · `GET /compose/projects`, `/:name`, `/:name/graph`,
@@ -125,7 +123,12 @@ SSE `GET /stream/events|stats|logs/:ref|operations/:id`.
 - Container `recreate` answers **200** `{ok:true, operationId}` exactly like the original route (the brief said 202; the original returns 200; the web UI does not care). Compose actions answer 202.
 - Compose action `pull` (listed in the brief) does **not** exist in the original (pull would move tags outside the staged workflow) → unknown action = 400. 
 - A daemon that is down at start does not stop the app: reads answer 503 `docker_unavailable`, `DockerBootstrap` retries lazily (and in the background).
-- `GET /ignored*` routes and the "stop monitoring" write side are not part of T2; the ignore list is *read* (filters containers, projects, events).
+- `GET|POST|DELETE /ignored` ("stop monitoring", admin only, `{entries}` / 201 entry / removed entry) are ported (`IgnoreService`): a pure filter that never calls Docker/Compose/files, allowed in read-only mode; audit actions `monitoring.stop` / `monitoring.restore`.
+- Image refs containing `/` arrive percent-encoded (`/images/reg.io%2Fteam%2Fapp:tag`); the route value is unescaped before the safe-ref check (tested).
+- **Doc bug to fix in T6**: the original `docs/API.md` lists a compose `pull` action; the original route (`routes/compose.ts` ACTIONS = up|stop|start|restart|down|redeploy) does not have it → 400 unknown action is correct here.
+
+**Tests (T2)**: unit 216 (33 new) · integration `SystemAndContainerReadTests`, `ContainerActionTests`, `ComposeTests`, `EventsAuditMonitorsIgnoredTests`, `StreamTests`, `ArchitectureTests` against `Support/FakeDocker` (one in-memory implementation of `IDockerEngine`/`IDockerCommands`/`IComposeCli`/`IStackFiles`/`ISelfProbe`/`IHostProbe`; `DockerHarness` = admin + viewer + logs-viewer) ·
+`LiveDockerTests` (`[Trait("Category","Live")]`, run `dotnet test --filter "Category!=Live"` where there is no daemon; without a reachable daemon they return early): read-only posture lists + df + info, and a throwaway container (`quaymaster.test=true`) create → logs → API remove (name confirmation) cycle. Architecture test: only `MutationGateway` (plus the adapters implementing the seams and the DI root) mention `IDockerCommands`/`IComposeCli`.
 
 **Known gaps for T3–T5**: read-only file helper (`compose/helper.ts`) not ported → limited projects have `fileAccess:"none"`; maintenance gate (`assertNotUnderMaintenance`) not wired; monitors cover container/host alerts only (update/maintenance monitors + real notification delivery = T5; default sink writes `monitor.alert` audit rows with an in-memory cool-down);
 stats history/ring buffer are in-memory + rollups; SSE `/stream/maintenance` is T4; image/volume/network removal & prune, registry, updates = later phases.
