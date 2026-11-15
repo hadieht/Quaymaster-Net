@@ -80,3 +80,16 @@ export function uptimeFromStatus(status: string): string {
   // Docker's `Status` text: "Up 3 hours (healthy)", "Exited (0) 2 days ago"
   return status.replace(/\s*\((healthy|unhealthy|health: starting)\)/, '');
 }
+
+/** Axis/tooltip label that includes the date, used when a chart spans more than a day. */
+export function dateAndTime(ms: number): string {
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return '–';
+  return d.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}

@@ -6,13 +6,14 @@ import {
   Legend,
   Line,
   LineChart,
+  ReferenceArea,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
 } from 'recharts';
 import { useTheme } from '@/state/theme';
-import { timeOnly } from '@/lib/format';
+import { dateAndTime, timeOnly } from '@/lib/format';
 
 export interface ChartSeries {
   key: string;
@@ -55,6 +56,10 @@ export interface TimeChartProps<T extends { t: number }> {
   yMax?: number;
   area?: boolean;
   stacked?: boolean;
+  /** Visible x window (epoch ms). Defaults to the extent of `data`. Shared by every chart on a page to keep them in sync. */
+  domain?: [number, number];
+  /** Enables drag-to-zoom: called with the selected (ordered) epoch-ms range. */
+  onSelect?: (from: number, to: number) => void;
 }
 
 /** One chart style for every time series in the app. */
@@ -66,12 +71,40 @@ export function TimeChart<T extends { t: number }>({
   ariaLabel,
   yMax,
   area = true,
+  domain,
+  onSelect,
 }: TimeChartProps<T>) {
   const colors = useChartColors();
   const tickStyle = useMemo(() => ({ fill: colors.text, fontSize: 11 }), [colors.text]);
+  const [dragFrom, setDragFrom] = useState<number | null>(null);
+  const [dragTo, setDragTo] = useState<number | null>(null);
+  const spanMs = domain ? domain[1] - domain[0] : data.length > 1 ? data[data.length - 1]!.t - data[0]!.t : 0;
+  const labelOf = spanMs > 24 * 3_600_000 ? dateAndTime : timeOnly;
+  const endDrag = () => {
+    if (onSelect && dragFrom !== null && dragTo !== null && dragFrom !== dragTo) {
+      onSelect(Math.min(dragFrom, dragTo), Math.max(dragFrom, dragTo));
+    }
+    setDragFrom(null);
+    setDragTo(null);
+  };
   const common = {
     data,
     margin: { top: 6, right: 8, bottom: 0, left: 0 },
+    ...(onSelect
+      ? {
+          onMouseDown: (e: { activeLabel?: string | number }) => {
+            if (e?.activeLabel !== undefined) setDragFrom(Number(e.activeLabel));
+          },
+          onMouseMove: (e: { activeLabel?: string | number }) => {
+            if (dragFrom !== null && e?.activeLabel !== undefined) setDragTo(Number(e.activeLabel));
+          },
+          onMouseUp: endDrag,
+          onMouseLeave: () => {
+            setDragFrom(null);
+            setDragTo(null);
+          },
+        }
+      : {}),
   };
   const axes = (
     <>
@@ -80,11 +113,12 @@ export function TimeChart<T extends { t: number }>({
         dataKey="t"
         type="number"
         scale="time"
-        domain={['dataMin', 'dataMax']}
-        tickFormatter={(v: number) => timeOnly(v)}
+        domain={domain ?? ['dataMin', 'dataMax']}
+        allowDataOverflow={Boolean(domain)}
+        tickFormatter={(v: number) => labelOf(v)}
         tick={tickStyle}
         stroke={colors.grid}
-        minTickGap={48}
+        minTickGap={spanMs > 24 * 3_600_000 ? 72 : 48}
       />
       <YAxis
         tickFormatter={format}
@@ -101,9 +135,18 @@ export function TimeChart<T extends { t: number }>({
           fontSize: 12,
         }}
         labelStyle={{ color: colors.fg }}
-        labelFormatter={(v) => timeOnly(Number(v))}
+        labelFormatter={(v) => (spanMs > 24 * 3_600_000 ? dateAndTime(Number(v)) : timeOnly(Number(v)))}
         formatter={(v, name) => [format(Number(v)), name]}
       />
+      {dragFrom !== null && dragTo !== null ? (
+        <ReferenceArea
+          x1={dragFrom}
+          x2={dragTo}
+          fill={colors.accent}
+          fillOpacity={0.15}
+          stroke={colors.accent}
+        />
+      ) : null}
       {series.length > 1 ? <Legend wrapperStyle={{ fontSize: 12, color: colors.text }} /> : null}
     </>
   );

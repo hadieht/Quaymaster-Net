@@ -1,4 +1,10 @@
-import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryKey,
+} from '@tanstack/react-query';
 import { api, describeError } from './client';
 import { useToast } from '@/components/ui/Toast';
 import type {
@@ -89,11 +95,19 @@ export const q = {
     queryFn: () => api.get<{ points: StatsPoint[] }>(`/containers/${encodeURIComponent(ref)}/stats`),
     refetchInterval: 30 * SECOND,
   }),
-  containerHistory: (ref: string, minutes: number) => ({
-    queryKey: ['container-history', ref, minutes],
+  /**
+   * Roll-ups for the last `minutes`, or for the epoch-minute window `win` (finer buckets when zoomed in).
+   * The server downsamples long windows automatically.
+   */
+  containerHistory: (ref: string, minutes: number, win?: { since: number; until: number } | null) => ({
+    queryKey: ['container-history', ref, minutes, win?.since ?? null, win?.until ?? null],
     queryFn: () =>
-      api.get<{ rollups: Rollup[] }>(`/containers/${encodeURIComponent(ref)}/stats/history`, { minutes }),
+      api.get<{ rollups: Rollup[] }>(
+        `/containers/${encodeURIComponent(ref)}/stats/history`,
+        win ? { since: win.since, until: win.until } : { minutes },
+      ),
     refetchInterval: 60 * SECOND,
+    placeholderData: keepPreviousData,
   }),
   logs: (ref: string, tail: number) => ({
     queryKey: ['logs', ref, tail],

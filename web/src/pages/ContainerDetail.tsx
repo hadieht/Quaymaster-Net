@@ -10,6 +10,7 @@ import { CapabilityBadge, ContainerStatus, HealthBadge } from '@/components/doma
 import { LogViewer } from '@/components/domain/LogViewer';
 import { ChartEmpty, TimeChart } from '@/components/domain/TimeChart';
 import {
+  Button,
   Card,
   CardBody,
   CardHeader,
@@ -26,6 +27,15 @@ import {
 } from '@/components/ui';
 import { CAPABILITY_TEXT } from '@/lib/status';
 import { bytes, dateTime, duration, relativeTime, shortImageId } from '@/lib/format';
+import {
+  rangeOptions,
+  selectionToWindow,
+  spanLabel,
+  pan,
+  zoomIn,
+  zoomOut,
+  type TimeWindow,
+} from '@/lib/chartWindow';
 import { useLive } from '@/state/live';
 
 type Tab = 'overview' | 'resources' | 'logs' | 'config';
@@ -190,13 +200,31 @@ function rate(points: StatsPoint[], key: 'netRx' | 'netTx' | 'blkRead' | 'blkWri
 }
 
 function Resources({ id, limit }: { id: string; limit: number }) {
-  const [range, setRange] = useState<'live' | '60' | '360' | '1440'>('live');
+  const settings = useQuery(q.settings());
+  const options = useMemo(() => rangeOptions(settings.data?.retention.statsHours), [settings.data]);
+  const [range, setRange] = useState<string>('live');
+  const [win, setWin] = useState<TimeWindow | null>(null);
   const live = useLive();
-  const seed = useQuery({ ...q.containerStats(id), enabled: range === 'live' });
-  const hist = useQuery({ ...q.containerHistory(id, Number(range) || 60), enabled: range !== 'live' });
+  const current = options.find((o) => o.key === range) ?? options[0]!;
+  const minutes = current.minutes ?? 60;
+  const isLive = current.minutes === null;
+  const winQuery = win ? { since: Math.floor(win.from / 60_000), until: Math.ceil(win.to / 60_000) } : null;
+  const seed = useQuery({ ...q.containerStats(id), enabled: isLive });
+  const hist = useQuery({ ...q.containerHistory(id, minutes, winQuery), enabled: !isLive });
+  // The fetched span of the un-zoomed range; zoom steps and panning stay inside it.
+  const bounds = useMemo<TimeWindow>(() => {
+    const to = Date.now();
+    return { from: to - minutes * 60_000, to };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [minutes, hist.dataUpdatedAt]);
+  const selectRange = (k: string) => {
+    setRange(k);
+    setWin(null);
+  };
+  const applyWindow = (w: TimeWindow | null) => setWin(w);
 
   const data = useMemo(() => {
-    if (range === 'live') {
+    if (isLive) {
       const merged = new Map<number, StatsPoint>();
       for (const p of seed.data?.points ?? []) merged.set(p.t, p);
       for (const p of live.series(id)) merged.set(p.t, p);
@@ -216,7 +244,7 @@ function Resources({ id, limit }: { id: string; limit: number }) {
       }));
     }
     const rows = hist.data?.rollups ?? [];
-    return rows.map((r, k) => {
+    const all = rows.map((r, k) => {
       const prev = rows[k - 1];
       const dt = prev ? (r.minute - prev.minute) * 60 : 0;
       const f = (a: number, b: number | undefined) =>
@@ -231,30 +259,83 @@ function Resources({ id, limit }: { id: string; limit: number }) {
         bw: f(r.blk_write, prev?.blk_write),
       };
     });
+    // While the finer window is loading, the coarse data is shown clipped to the window.
+    return win ? all.filter((p) => p.t >= win.from && p.t <= win.to) : all;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [range, seed.data, hist.data, live.tick, id]);
+  }, [isLive, seed.data, hist.data, live.tick, id, win]);
 
-  const loading = range === 'live' ? seed.isLoading : hist.isLoading;
+  const loading = isLive ? seed.isLoading : hist.isLoading;
+  const domain: [number, number] | undefined = win ? [win.from, win.to] : undefined;
+  const onSelect = isLive
+    ? undefined
+    : (from: number, to: number) => applyWindow(selectionToWindow(from, to, bounds));
+  const visible = win ?? bounds;
+  const zoomedIn = win !== null;
   return (
     <div className="space-y-4">
-      <Segmented
-        label="Time range"
-        value={range}
-        onChange={setRange}
-        options={[
-          { key: 'live', label: 'Live' },
-          { key: '60', label: '1 h' },
-          { key: '360', label: '6 h' },
-          { key: '1440', label: '24 h' },
-        ]}
-      />
+      <div className="flex flex-wrap items-center gap-3">
+        <Segmented
+          label="Time range"
+          value={current.key}
+          onChange={selectRange}
+          options={options.map((o) => ({ key: o.key, label: o.label }))}
+        />
+        {isLive ? null : (
+          <div role="group" aria-label="Zoom" className="flex flex-wrap items-center gap-1.5">
+            <Button
+              size="sm"
+              aria-label="Zoom in"
+              onClick={() => applyWindow(zoomIn(visible, bounds))}
+              disabledReason={visible.to - visible.from <= 3_600_000 ? 'Already at the 1 h minimum' : null}
+            >
+              Zoom in
+            </Button>
+            <Button
+              size="sm"
+              aria-label="Zoom out"
+              onClick={() => applyWindow(zoomOut(visible, bounds))}
+              disabledReason={zoomedIn ? null : 'Showing the whole range'}
+            >
+              Zoom out
+            </Button>
+            <Button
+              size="sm"
+              aria-label="Earlier"
+              onClick={() => win && applyWindow(pan(win, bounds, -1))}
+              disabledReason={zoomedIn ? null : 'Zoom in first'}
+            >
+              ◀
+            </Button>
+            <Button
+              size="sm"
+              aria-label="Later"
+              onClick={() => win && applyWindow(pan(win, bounds, 1))}
+              disabledReason={zoomedIn ? null : 'Zoom in first'}
+            >
+              ▶
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-label="Reset zoom"
+              onClick={() => applyWindow(null)}
+              disabledReason={zoomedIn ? null : 'Showing the whole range'}
+            >
+              Reset
+            </Button>
+            <span className="text-xs text-muted" aria-live="polite">
+              Showing {spanLabel(visible.to - visible.from)} · drag on a chart to zoom
+            </span>
+          </div>
+        )}
+      </div>
       {loading ? (
         <LoadingState />
       ) : data.length < 2 ? (
         <Card>
           <CardBody>
             <ChartEmpty>
-              {range === 'live'
+              {isLive
                 ? 'Waiting for samples (the container must be running).'
                 : 'No history for this period yet.'}
             </ChartEmpty>
@@ -267,6 +348,8 @@ function Resources({ id, limit }: { id: string; limit: number }) {
             <CardBody>
               <TimeChart
                 data={data}
+                domain={domain}
+                onSelect={onSelect}
                 series={[{ key: 'cpu', label: 'CPU', color: 'accent' }]}
                 format={(v) => `${v.toFixed(1)} %`}
                 ariaLabel="CPU usage"
@@ -281,6 +364,8 @@ function Resources({ id, limit }: { id: string; limit: number }) {
             <CardBody>
               <TimeChart
                 data={data}
+                domain={domain}
+                onSelect={onSelect}
                 series={[{ key: 'mem', label: 'Memory', color: 'info' }]}
                 format={(v) => bytes(v, 0)}
                 ariaLabel="Memory usage"
@@ -292,6 +377,8 @@ function Resources({ id, limit }: { id: string; limit: number }) {
             <CardBody>
               <TimeChart
                 data={data}
+                domain={domain}
+                onSelect={onSelect}
                 series={[
                   { key: 'rx', label: 'Received', color: 'healthy' },
                   { key: 'tx', label: 'Sent', color: 'warning' },
@@ -306,6 +393,8 @@ function Resources({ id, limit }: { id: string; limit: number }) {
             <CardBody>
               <TimeChart
                 data={data}
+                domain={domain}
+                onSelect={onSelect}
                 series={[
                   { key: 'br', label: 'Read', color: 'info' },
                   { key: 'bw', label: 'Write', color: 'critical' },
