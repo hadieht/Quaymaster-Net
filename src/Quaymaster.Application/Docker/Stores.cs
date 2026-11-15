@@ -34,7 +34,7 @@ public interface IStatsStore
 {
     Task UpsertManyAsync(IReadOnlyList<RollupRow> rows, CancellationToken ct);
 
-    Task<IReadOnlyList<RollupRow>> HistoryAsync(string containerId, long sinceMinute, int limit, CancellationToken ct);
+    Task<IReadOnlyList<RollupRow>> HistoryAsync(string containerId, long sinceMinute, int limit, CancellationToken ct, long? untilMinute = null);
 
     /// <summary>Every container's roll-ups since a minute, ordered by container then minute (dashboard overview).</summary>
     Task<IReadOnlyList<RollupRow>> SinceAsync(long sinceMinute, int limit, CancellationToken ct);

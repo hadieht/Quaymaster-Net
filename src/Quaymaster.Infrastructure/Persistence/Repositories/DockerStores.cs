@@ -251,11 +251,12 @@ internal sealed class StatsStore(IDbContextFactory<AppDbContext> factory) : ISta
         await tx.CommitAsync(ct);
     }
 
-    public async Task<IReadOnlyList<RollupRow>> HistoryAsync(string containerId, long sinceMinute, int limit, CancellationToken ct)
+    public async Task<IReadOnlyList<RollupRow>> HistoryAsync(string containerId, long sinceMinute, int limit, CancellationToken ct, long? untilMinute = null)
     {
+        var until = untilMinute ?? long.MaxValue;
         await using var db = await factory.CreateDbContextAsync(ct);
         var rows = await db.Database.SqlQuery<RollupRowSql>(
-            $"SELECT container_id AS ContainerId, minute AS Minute, name AS Name, samples AS Samples, cpu_avg AS CpuAvg, cpu_max AS CpuMax, mem_avg AS MemAvg, mem_max AS MemMax, net_rx AS NetRx, net_tx AS NetTx, blk_read AS BlkRead, blk_write AS BlkWrite FROM stats_rollups WHERE container_id = {containerId} AND minute >= {sinceMinute} ORDER BY minute LIMIT {limit}")
+            $"SELECT container_id AS ContainerId, minute AS Minute, name AS Name, samples AS Samples, cpu_avg AS CpuAvg, cpu_max AS CpuMax, mem_avg AS MemAvg, mem_max AS MemMax, net_rx AS NetRx, net_tx AS NetTx, blk_read AS BlkRead, blk_write AS BlkWrite FROM stats_rollups WHERE container_id = {containerId} AND minute >= {sinceMinute} AND minute <= {until} ORDER BY minute LIMIT {limit}")
             .ToListAsync(ct);
         return [.. rows.Select(r => new RollupRow(r.ContainerId, r.Minute, r.Name, (int)r.Samples, r.CpuAvg, r.CpuMax, r.MemAvg, r.MemMax, r.NetRx, r.NetTx, r.BlkRead, r.BlkWrite))];
     }

@@ -114,7 +114,7 @@ Unauthenticated requests to **unknown** `/api/` paths get 401 (authentication ru
   `capability` (`full|limited|standalone`), `mutable`, `protectedReason`, `restartCount`, `startedAt`.
 - `GET /containers/:ref` → redacted inspect. `:ref` is a name, short or full id.
 - `GET /containers/:ref/logs?tail&since&timestamps` (logs) → tail 1-5000.
-- `GET /containers/:ref/stats` → `{points}` (ring buffer). `GET /containers/:ref/stats/history?minutes` → `{rollups}` (one-minute roll-ups, 1-10080 minutes).
+- `GET /containers/:ref/stats` → `{points}` (ring buffer). `GET /containers/:ref/stats/history` → `{rollups}`. Params (all optional): `minutes` 1-43200 (default 60); `since`/`until` epoch-minutes window (max 43200 minutes wide, overrides `minutes`; `until` defaults to now); `bucket` 1-1440 minutes. Windows up to 24 h return raw one-minute roll-ups; longer windows are downsampled automatically to at most ~1000 points (`minute` = bucket start, CPU/memory averages weighted by samples, maxima kept, network/block counters are cumulative so the last value is kept). Data exists only as far back as `QM_STATS_RETENTION_HOURS`.
 - `POST /containers/:ref/actions/:action` (admin), `:action` ∈ `start|stop|restart|kill|pause|unpause|remove|recreate`.
   Body (strict): `{confirm?, applyDrift?, confirmNamespaceProvider?, signal?, timeoutSeconds?}`. `remove` and `recreate`
   require `confirm` = container name; `remove` never forces and never removes volumes. `recreate` works for Compose-managed

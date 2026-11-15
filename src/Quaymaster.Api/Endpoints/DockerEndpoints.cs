@@ -7,6 +7,7 @@ using Quaymaster.Application.Errors;
 using Quaymaster.Application.Stats;
 using Quaymaster.Application.Validation;
 using Quaymaster.Domain.Identity;
+using Quaymaster.Domain.Stats;
 
 namespace Quaymaster.Api.Endpoints;
 
@@ -64,11 +65,23 @@ public static partial class DockerEndpoints
         api.MapGet("/containers/{reference}/stats/history", async (HttpContext http, string reference, IContainerService containers, IStatsStore store, TimeProvider time) =>
         {
             var q = new QueryReader(k => http.Request.Query[k].FirstOrDefault());
-            var minutes = q.NumberInRange("minutes", 1, 7 * 24 * 60, 60) ?? 60;
+            const int maxMinutes = 30 * 24 * 60; // = the QM_STATS_RETENTION_HOURS ceiling (720 h)
+            var minutes = q.NumberInRange("minutes", 1, maxMinutes, 60) ?? 60;
+            var bucket = q.NumberInRange("bucket", 1, 1440);
+            var sinceParam = q.Number64InRange("since", 0, long.MaxValue);
+            var untilParam = q.Number64InRange("until", 0, long.MaxValue);
             q.ThrowIfInvalid();
             var c = await containers.ResolveAsync(reference, http.RequestAborted);
-            var since = (time.GetUtcNow().ToUnixTimeMilliseconds() / 60_000) - minutes;
-            var rows = await store.HistoryAsync(c.Id, since, 10_000, http.RequestAborted);
+            var nowMinute = time.GetUtcNow().ToUnixTimeMilliseconds() / 60_000;
+            var until = untilParam ?? nowMinute;
+            var since = sinceParam ?? (until - minutes);
+            if (until <= since || until - since > maxMinutes)
+            {
+                throw AppException.BadRequest($"since/until must span 1..{maxMinutes} minutes (epoch minutes)");
+            }
+
+            var rawRows = await store.HistoryAsync(c.Id, since, maxMinutes + 1_000, http.RequestAborted, untilParam);
+            var rows = RollupBucketing.Downsample(rawRows, bucket ?? RollupBucketing.AutoBucket(until - since));
             return new
             {
                 rollups = rows.Select(r => new RollupDto(r.ContainerId, r.Minute, r.Name, r.Samples, r.CpuAvg, r.CpuMax, r.MemAvg, r.MemMax, r.NetRx, r.NetTx, r.BlkRead, r.BlkWrite)),

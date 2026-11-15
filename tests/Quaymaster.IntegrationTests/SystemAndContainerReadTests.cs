@@ -146,6 +146,10 @@ public sealed class SystemAndContainerReadTests : IAsyncLifetime
         history.Json.GetProperty("rollups").ValueKind.Should().Be(System.Text.Json.JsonValueKind.Array);
         (await _h.Viewer.GetAsync("/containers/web/stats/history?minutes=0")).Status.Should().Be(400);
         (await _h.Viewer.GetAsync("/containers/web/stats/history?minutes=abc")).Status.Should().Be(400);
+        (await _h.Viewer.GetAsync("/containers/web/stats/history?minutes=43200&bucket=15")).Status.Should().Be(200);
+        (await _h.Viewer.GetAsync("/containers/web/stats/history?bucket=0")).Status.Should().Be(400);
+        (await _h.Viewer.GetAsync("/containers/web/stats/history?since=100&until=50")).Status.Should().Be(400);
+        (await _h.Viewer.GetAsync("/containers/web/stats/history?since=100&until=160&bucket=5")).Status.Should().Be(200);
     }
 
     [Fact]
