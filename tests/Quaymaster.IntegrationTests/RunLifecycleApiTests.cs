@@ -375,23 +375,36 @@ public sealed class RunLifecycleApiTests : IDisposable
         var (id, hash) = await CreateAsync(h);
         var (id2, hash2) = await CreateAsync(h);
         var gate = new TaskCompletionSource();
+        var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         h.Factory.Services.GetRequiredService<RunHooks>().OnStep = async (_, step, _, phase) =>
         {
             if (step == "preflight" && phase == "start")
             {
+                reached.TrySetResult();
                 await gate.Task;
             }
         };
-        (await ApproveAsync(h, id, hash)).Status.Should().Be(202);
+        try
+        {
+            (await ApproveAsync(h, id, hash)).Status.Should().Be(202);
 
-        var second = await ApproveAsync(h, id2, hash2);
-        (second.Status, second.ErrorCode).Should().Be((409, "conflict"));
-        second.ErrorMessage.Should().Contain("one run at a time");
-        var startNow = await h.Admin.PostAsync("/maintenance/runs", new { project = "shop", startNow = true, confirm = "shop" });
-        startNow.Status.Should().Be(409);
-        (await h.Admin.GetAsync("/maintenance/runs?status=awaiting_approval")).Json.GetProperty("runs").GetArrayLength().Should().Be(1, "the declined run waits; no orphan was created");
+            // Wait until the first run is actually executing (held at preflight), so the second approval
+            // deterministically meets the "one run at a time" guard rather than racing the operation lock.
+            await reached.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
-        gate.SetResult();
+            var second = await ApproveAsync(h, id2, hash2);
+            (second.Status, second.ErrorCode).Should().Be((409, "conflict"));
+            second.ErrorMessage.Should().Contain("one run at a time");
+            var startNow = await h.Admin.PostAsync("/maintenance/runs", new { project = "shop", startNow = true, confirm = "shop" });
+            startNow.Status.Should().Be(409);
+            (await h.Admin.GetAsync("/maintenance/runs?status=awaiting_approval")).Json.GetProperty("runs").GetArrayLength().Should().Be(1, "the declined run waits; no orphan was created");
+        }
+        finally
+        {
+            // Always release the held step: a failed assertion above must surface as a failure, not hang the test host.
+            gate.TrySetResult();
+        }
+
         (await WaitFinalAsync(h, id)).GetProperty("status").GetString().Should().Be("completed");
         (await ApproveAsync(h, id2, hash2)).Status.Should().Be(202, "serialised: it can go once the first is done");
     }
