@@ -578,3 +578,39 @@ cause of the T6 "PostDeployLive" mystery. F-02's second half (gateway `RunCompos
 `RunEnvironment.UpAsync`, not in the gateway: the typed-target refactor the audit suggests was deliberately not done (no restructuring).
 
 **Live results.** `LiveRedTeamTests` (2) pass on the real daemon, fixtures only; `docker ps -a --filter label=quaymaster.test=true` is empty afterwards.
+
+## T9 — user documentation (muse, 2026-11-15) — **COMPLETE**
+
+Written/updated: `README.md`, `docs/{INSTALL,DEPLOY,CONFIGURATION,OPERATIONS,MAINTENANCE,SECURITY-MODEL,ARCHITECTURE,API}.md`
+(`docs/reviews/` untouched; no code, `web/` or test changes). Sources: the code, this file, the Dockerfile, compose file and unit.
+
+**Verified by running** (scratch data dirs and ports, `qm-*` throw-away containers/volumes, all removed): published API started with
+`QM_SECRET_KEY`, `/healthz`, first-run setup with the token (token file deleted afterwards), cookie `qm_session`, CSRF/Origin
+403s, 5 wrong passwords then 429 + `Retry-After`, security headers, ~30 authenticated GET routes (shapes in API.md), `gen-secret` /
+`hash-password` (native and in the image; short password rc 1), `docker build`, the image with the real socket + `--group-add`
+(healthy, uid 10001, data dir 0700/db 0600), `.env.example` accepted unedited, no-socket smoke run, `sqlite3 .backup` and
+`VACUUM INTO` against a live WAL database, restore into a fresh volume (admin login worked, sessions survived), the alpine
+`tar` offline backup, config error output, second-instance lock message, `docker compose config`, `dotnet publish`,
+`systemd-analyze verify` on the unit. **Not run:** `docker compose up` with the real compose file (port 8787 and the container
+name belong to the host), the native systemd install (needs root), reverse-proxy snippets, socket proxy, the lost-admin SQL
+(`DELETE FROM users` was blocked by the environment guard), opening a data dir written by the _original_ server, `npm run e2e`.
+
+**Doc/code mismatches found (code not changed):**
+
+1. `.env.example`: `QM_STACK_PATHS=/srv/stacks` is active and its comment says "Default: /srv/stacks"; the code default is _none_.
+2. `.env.example`: `QM_PUBLIC_ORIGIN` is described as "additional allowed origins"; the code _replaces_ the derived default list.
+3. `.env.example`: `QM_STACK_AUTO_MOUNTS` is described as "auto-discover stack directories under QM_STACK_PATHS"; the code treats
+   same-path bind mounts of Quaymaster's own container as allowed roots (`DockerBootstrap.ComputeMountRootsAsync`).
+4. `.env.example`: `QM_REGISTRY_INSECURE` says "host:port or CIDR"; `RegistryClient.IsInsecure` matches exact host(:port) only.
+5. `.env.example`: `QM_DOCKER_ROOT_MOUNT=/` and `QM_REGISTRY_INSECURE=127.0.0.1:5055` are active dev values; `QM_WEB_DIR=web/dist`
+   resolves against the working directory (wrong under `dotnet run`).
+6. `QM_HELPER_ENABLED|IMAGE|LABELS` are parsed and validated but nothing reads them (the file helper is not ported). `.env.example` presents them as working options.
+7. Default origins use the port _inside_ the container (`QM_PORT`), so `DEPLOY_PORT`/`-p` other than 8787 breaks login with 403 `origin`
+   unless `QM_PUBLIC_ORIGIN` is set. Neither `docker-compose.yml` nor `.env.example` says so (docs now do). Suggest the compose file derive it from `DEPLOY_PORT`.
+8. `docs/PROGRESS.md` T5 table says the channel discriminator is `kind`; the wire field (and `shared/src/notifications.ts`) is `type`.
+9. `GET /maintenance/cron/preview` takes `cron` and `timezone`; no doc named the parameters (now in API.md).
+10. A second instance on the same data dir exits with an unhandled-exception stack trace (the message line is correct); cosmetic.
+11. `setup_required` is in `ErrorCode` and `shared/src/api.ts` but no route returns it.
+12. No published image exists although the original had one; README/INSTALL now say so.
+13. `tests/DebugDbInit/` still exists on disk (only `bin`/`obj` leftovers; T6d reported it removed). Ignored by git.
+14. The working tree had uncommitted edits by another worker in `NotificationService.cs` and `MaintenanceConfigApiTests.cs` when T9 started; T9 did not touch or commit them.
