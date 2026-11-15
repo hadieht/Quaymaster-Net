@@ -47,9 +47,10 @@ public sealed class EventsAuditMonitorsIgnoredTests : IDisposable
         await h.Docker.WaitEventsHandledAsync();
         await cts.CancelAsync();
         // the flusher sleeps on the fake clock; keep ticking it until shutdown has flushed the batch
-        while (await Task.WhenAny(run, Task.Delay(20)) != run)
+        while (!run.IsCompleted)
         {
             h.Factory.Time.Advance(TimeSpan.FromMilliseconds(250));
+            await Task.Delay(20);
         }
 
         await run;

@@ -126,7 +126,7 @@ public sealed partial class NotificationService : INotificationService, INotific
         var now = Now;
         var row = new ChannelRow(id, kind.Type, name, input.Enabled ?? true, minSeverity, events, $"notify:{id}", now, now);
         await _store.InsertChannelAsync(row, config.ToJsonString(), ct);
-        FeedScrubber(config);
+        FeedScrubber(config, kind.Fields.Where(f => f.Secret).Select(f => f.Name).ToHashSet(StringComparer.Ordinal));
         await _audit.RecordAsync(new AuditRecord(actor.Name, "notifications.channel.create", AuditOutcome.Success, actor.Ip, id, new { type = row.Type, name, enabled = row.Enabled }), ct);
         return await ToInfoAsync(row, ct);
     }
@@ -186,7 +186,7 @@ public sealed partial class NotificationService : INotificationService, INotific
 
             var config = ParseConfig(kind, merged);
             configJson = config.ToJsonString();
-            FeedScrubber(config);
+            FeedScrubber(config, kind.Fields.Where(f => f.Secret).Select(f => f.Name).ToHashSet(StringComparer.Ordinal));
         }
 
         await _store.UpdateChannelAsync(next, configJson, ct);
@@ -557,7 +557,9 @@ public sealed partial class NotificationService : INotificationService, INotific
         {
             foreach (var c in await _store.ListChannelsAsync(ct))
             {
-                FeedScrubber(await LoadConfigAsync(c, ct));
+                var kind = Channels.Get(c.Type);
+                var secretFields = kind?.Fields.Where(f => f.Secret).Select(f => f.Name).ToHashSet(StringComparer.Ordinal) ?? [];
+                FeedScrubber(await LoadConfigAsync(c, ct), secretFields);
             }
         }
         catch (Exception e) when (e is not OperationCanceledException)
@@ -566,31 +568,44 @@ public sealed partial class NotificationService : INotificationService, INotific
         }
     }
 
-    private void FeedScrubber(JsonObject config)
+    private void FeedScrubber(JsonObject config, HashSet<string> secretFields)
     {
-        foreach (var (_, v) in config)
+        foreach (var (k, v) in config)
         {
+            if (!secretFields.Contains(k))
+            {
+                continue;
+            }
+
             if (v is JsonValue jv && jv.TryGetValue<string>(out var s))
             {
-                _scrubber.Add(s);
-                if (Uri.TryCreate(s, UriKind.Absolute, out var u))
+                // For URL-like secrets, skip those without a path (e.g., "http://host:port")
+                // because their masked form (scheme://host/••••••) contains the original as a
+                // substring, causing over-scrubbing in API responses (F-01/F-10).
+                // URL-like secrets WITH paths (e.g., webhook URLs) are safe to add.
+                var isUrlLike = Uri.TryCreate(s, UriKind.Absolute, out var u) && (u.AbsolutePath.Length == 0 || u.AbsolutePath == "/");
+                if (!isUrlLike)
                 {
-                    if (u.AbsolutePath.Length > 1)
+                    _scrubber.Add(s);
+                    if (Uri.TryCreate(s, UriKind.Absolute, out u))
                     {
-                        _scrubber.Add(u.AbsolutePath);
-                    }
-
-                    foreach (var seg in u.AbsolutePath.Split('/'))
-                    {
-                        if (seg.Length >= 8)
+                        if (u.AbsolutePath.Length > 1)
                         {
-                            _scrubber.Add(seg);
+                            _scrubber.Add(u.AbsolutePath);
                         }
-                    }
 
-                    if (u.Query.Length > 1)
-                    {
-                        _scrubber.Add(u.Query[1..]);
+                        foreach (var seg in u.AbsolutePath.Split('/'))
+                        {
+                            if (seg.Length >= 8)
+                            {
+                                _scrubber.Add(seg);
+                            }
+                        }
+
+                        if (u.Query.Length > 1)
+                        {
+                            _scrubber.Add(u.Query[1..]);
+                        }
                     }
                 }
             }

@@ -273,7 +273,7 @@ public sealed class NotificationsApiTests : IDisposable
         ok.Body.Should().Be("""{"ok":true,"httpStatus":200,"error":null}""");
         var req = _transport.Requests.Single();
         req.Url.Should().Be("https://hooks.example.com" + HookPath);
-        var payload = JsonDocument.Parse(req.Body!).RootElement;
+        var payload = JsonElement.Parse(req.Body!);
         payload.GetProperty("type").GetString().Should().Be("test");
         payload.GetProperty("severity").GetString().Should().Be("info");
         payload.GetProperty("title").GetString().Should().Be("Quaymaster test notification");
@@ -317,7 +317,7 @@ public sealed class NotificationsApiTests : IDisposable
         _transport.Mails.Should().ContainSingle().Which.Subject.Should().Be("[WARNING] Update failed: shop");
         var hookReq = _transport.Requests.Single(r => r.Url.EndsWith("/in", StringComparison.Ordinal));
         hookReq.Method.Should().Be("POST");
-        var body = JsonDocument.Parse(hookReq.Body!).RootElement;
+        var body = JsonElement.Parse(hookReq.Body!);
         body.GetProperty("type").GetString().Should().Be("run.failed");
         body.GetProperty("data").GetProperty("run").GetString().Should().Be("r1");
         hookReq.Headers.Single(x => x.Key == "X-Quaymaster-Signature").Value.Should().Be("sha256=" + Hmac(HookSecret, hookReq.Body!));
@@ -471,7 +471,7 @@ public sealed class NotificationsApiTests : IDisposable
         await h.Factory.Services.GetRequiredService<IMonitorEvaluator>().TickAsync(default);
         await h.Factory.Services.GetRequiredService<INotificationService>().FlushAsync();
         var req = _transport.Requests.Should().ContainSingle().Which;
-        var body = JsonDocument.Parse(req.Body!).RootElement;
+        var body = JsonElement.Parse(req.Body!);
         body.GetProperty("type").GetString().Should().Be("updates.available");
         body.GetProperty("severity").GetString().Should().Be("info");
         body.GetProperty("data").GetProperty("count").GetInt32().Should().BeGreaterThan(0);

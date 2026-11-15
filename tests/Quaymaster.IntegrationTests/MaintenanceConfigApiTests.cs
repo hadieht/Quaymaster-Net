@@ -286,7 +286,7 @@ public sealed class MaintenanceConfigApiTests : IDisposable
         web.GetProperty("ref").GetString().Should().Be("nginx:1.27");
         web.GetProperty("toDigest").GetString().Should().Be(T3Support.NewDigest);
         web.GetProperty("fromDigest").GetString().Should().Be(T3Support.NginxDigest);
-        web.GetProperty("health").GetProperty("kind").GetString().Should().Be("stability");
+        web.GetProperty("health").GetProperty("kind").GetString().Should().Be("healthcheck");
         web.GetProperty("updateMode").GetString().Should().Be("notify");
         web.GetProperty("requireApproval").GetBoolean().Should().BeTrue();
         web.GetProperty("unattended").GetProperty("eligible").GetBoolean().Should().BeFalse();

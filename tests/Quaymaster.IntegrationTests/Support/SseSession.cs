@@ -5,7 +5,7 @@ namespace Quaymaster.IntegrationTests.Support;
 
 public sealed record SseMessage(string Event, string Data)
 {
-    public JsonElement Json => JsonDocument.Parse(Data).RootElement;
+    public JsonElement Json => JsonElement.Parse(Data);
 }
 
 /// <summary>Opens a Server-Sent Events response on the in-memory host and reads frames as they arrive.</summary>

@@ -44,7 +44,7 @@ public sealed class AuditLogTests
         entry.Ip.Should().Be("1.2.3.4");
         entry.Target.Should().Be("bob");
         entry.Outcome.Should().Be(AuditOutcome.Success);
-        JsonDocument.Parse(entry.ParamsJson!).RootElement.GetRawText().Should().Be("{\"role\":\"viewer\"}");
+        JsonElement.Parse(entry.ParamsJson!).GetRawText().Should().Be("{\"role\":\"viewer\"}");
     }
 
     [Fact]

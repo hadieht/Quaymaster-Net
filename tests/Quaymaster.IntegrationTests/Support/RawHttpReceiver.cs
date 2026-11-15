@@ -55,7 +55,7 @@ public sealed class RawHttpReceiver : IDisposable
             sb.Append("Location: ").Append(location).Append("\r\n");
         }
 
-        sb.Append("Content-Length: ").Append(bodyBytes).Append("\r\nConnection: close\r\n\r\n").Append(new string('x', bodyBytes));
+        sb.Append("Content-Length: ").Append(bodyBytes).Append("\r\nConnection: close\r\n\r\n").Append('x', bodyBytes);
         return sb.ToString();
     }
 

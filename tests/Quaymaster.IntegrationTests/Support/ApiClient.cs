@@ -6,7 +6,7 @@ namespace Quaymaster.IntegrationTests.Support;
 
 public sealed record ApiResponse(int Status, HttpResponseHeaders Headers, HttpContentHeaders ContentHeaders, string Body)
 {
-    public JsonElement Json => JsonDocument.Parse(Body).RootElement;
+    public JsonElement Json => JsonElement.Parse(Body);
 
     public string? Header(string name) =>
         Headers.TryGetValues(name, out var values) || ContentHeaders.TryGetValues(name, out values) ? values.First() : null;
