@@ -359,6 +359,7 @@ public class RunServiceTests
         public Fixture(bool locked = false)
         {
             Ops.IsLocked("maintenance").Returns(locked);
+            World.Runs.OtherRunExecuting = locked;
             Executor.ExecuteAsync(default!, default!, default).ReturnsForAnyArgs("completed");
             Ops.StartAsync(Arg.Any<OperationStart>(), Arg.Any<CancellationToken>()).Returns(c =>
             {

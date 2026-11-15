@@ -426,3 +426,20 @@ npm run build                          green
 - `GET /stream/maintenance` still polled at 2 s; monitor cool-down is process-local (lost on restart, at most one re-announce of `updates.available` per restart; daily marker in `kv`).
 - `docs/API.md` does not yet document the new notification endpoints or streams.
 - Web UI does not yet use `/stream/maintenance` (gap from T4c).
+
+## T6a — run-serialisation guard race (forge, 2026-11-15) — **COMPLETE**
+
+**The race.** A run holds the `maintenance` operation lock (`OperationManager._locks`) for the whole `Run` delegate. The terminal status (`completed`/`failed`/`rolled_back`…)
+is written by `RecordAsync`/the standalone executor *inside* that delegate, which then still did the update-status refresh, the audit write, the log line and the
+notification dispatch (T5) before returning — only then was the lock released. A client that saw `completed` and immediately approved the next run got 409
+("Another operation … is already running on maintenance") although no run was executing. Deterministic in the isolated
+`Overlapping_runs_…` test (4/4 before the fix).
+
+**The fix.** `IOperationContext.ReleaseLock()` (idempotent, only releases if this operation still holds the key); `OperationManager.RunAsync` uses it for its own release.
+`RunExecutor.RecordAsync` and `StandaloneExecutor` call `ctx.ReleaseLock()` immediately *before* `runs.FinishAsync`. Overlap safety is unchanged: until the terminal status is
+written the row is `running`, and `RunService.EnsureNoRunActiveAsync` (store-backed `RunningAsync`) refuses the second start; after it, nothing blocks. No wire-format change.
+The unit fake (`FakeRunStore.OtherRunExecuting`) now simulates the foreign running run for `Overlapping_runs_are_serialised_a_second_start_now…`, which was still mocking the
+old lock-based check (stale since the 567a5a3 checkpoint).
+
+**Evidence.** Isolated filter `Overlapping_runs` 3/3 passed in a row; full `dotnet test -c Release` after the fix: integration 289 passed / 0 failed / 0 skipped (live tests
+included, 5m17s); unit 648/648 after the fake fix; `dotnet build` 0 warnings / 0 errors; `npm run build` green.

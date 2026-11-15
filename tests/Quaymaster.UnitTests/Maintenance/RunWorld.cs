@@ -106,7 +106,11 @@ internal sealed class FakeRunStore : IRunStore
     public Task<IReadOnlyList<RunInfo>> ListAsync(int limit, string? status, string? target, CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<RunInfo>>([.. _rows.Where(r => (status is null || r.Status == status) && (target is null || r.New.Target == target)).Reverse().Take(limit).Select(Info)]);
 
-    public Task<RunInfo?> RunningAsync(CancellationToken ct) => Task.FromResult(_rows.Where(r => r.Status == "running").Select(Info).FirstOrDefault());
+    /// <summary>Pretends another run is executing right now (a foreign `running` row that is not part of the listed rows).</summary>
+    public bool OtherRunExecuting { get; set; }
+
+    public Task<RunInfo?> RunningAsync(CancellationToken ct) =>
+        Task.FromResult(_rows.Where(r => r.Status == "running").Select(Info).FirstOrDefault() ?? (OtherRunExecuting ? new RunInfo { Id = "other", Kind = "compose", Trigger = "manual", Target = "other", RequestedBy = "admin", CreatedAt = "2026-01-01T00:00:00Z", Status = RunStatuses.Running } : null));
 
     public Task<bool> ApproveAsync(string id, string by, string planHash, long now, CancellationToken ct)
     {
