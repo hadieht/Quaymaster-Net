@@ -32,12 +32,44 @@ internal sealed class InMemoryUserRepository : IUserRepository
         return Task.FromResult(user);
     }
 
-    public Task UpdateAsync(User user, CancellationToken ct) => Task.CompletedTask;
-
-    public Task DeleteAsync(long id, CancellationToken ct)
+    public Task SetPasswordHashAsync(long id, string passwordHash, DateTimeOffset now, CancellationToken ct)
     {
-        _users.RemoveAll(u => u.Id == id);
+        _users.FirstOrDefault(u => u.Id == id)?.SetPasswordHash(passwordHash, now);
         return Task.CompletedTask;
+    }
+
+    public Task<UserMutation> PatchGuardedAsync(long id, UserPatch patch, CancellationToken ct)
+    {
+        var user = _users.FirstOrDefault(u => u.Id == id);
+        if (user is null)
+        {
+            return Task.FromResult(new UserMutation(null, false));
+        }
+
+        if (LastAdminRule.PatchViolates(user, patch, _users.Count(u => u.IsActiveAdmin)))
+        {
+            return Task.FromResult(new UserMutation(user, true));
+        }
+
+        user.Apply(patch);
+        return Task.FromResult(new UserMutation(user, false));
+    }
+
+    public Task<UserMutation> DeleteGuardedAsync(long id, CancellationToken ct)
+    {
+        var user = _users.FirstOrDefault(u => u.Id == id);
+        if (user is null)
+        {
+            return Task.FromResult(new UserMutation(null, false));
+        }
+
+        if (LastAdminRule.DeleteViolates(user, _users.Count(u => u.IsActiveAdmin)))
+        {
+            return Task.FromResult(new UserMutation(user, true));
+        }
+
+        _users.Remove(user);
+        return Task.FromResult(new UserMutation(user, false));
     }
 }
 

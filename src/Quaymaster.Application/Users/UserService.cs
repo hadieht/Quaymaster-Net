@@ -65,14 +65,12 @@ public sealed class UserService(
 
     public async Task<UserInfoDto> UpdateAsync(long id, UserPatch patch, Actor actor, CancellationToken ct)
     {
-        var user = await users.FindByIdAsync(id, ct) ?? throw AppException.NotFound("User");
-        if (LastAdminRule.PatchRemovesAdmin(user, patch) && LastAdminRule.PatchViolates(user, patch, await users.CountActiveAdminsAsync(ct)))
+        var result = await users.PatchGuardedAsync(id, patch, ct);
+        var user = result.User ?? throw AppException.NotFound("User");
+        if (result.LastAdminViolation)
         {
             throw AppException.Conflict("Cannot demote or disable the last active admin");
         }
-
-        user.Apply(patch);
-        await users.UpdateAsync(user, ct);
 
         // a privilege change revokes all sessions of the user (and closes their streams)
         if (!patch.IsEmpty)
@@ -94,13 +92,13 @@ public sealed class UserService(
 
     public async Task DeleteAsync(long id, Actor actor, CancellationToken ct)
     {
-        var user = await users.FindByIdAsync(id, ct) ?? throw AppException.NotFound("User");
-        if (LastAdminRule.DeleteViolates(user, await users.CountActiveAdminsAsync(ct)))
+        var result = await users.DeleteGuardedAsync(id, ct);
+        var user = result.User ?? throw AppException.NotFound("User");
+        if (result.LastAdminViolation)
         {
             throw AppException.Conflict("Cannot delete the last active admin");
         }
 
-        await users.DeleteAsync(id, ct);
         bus.Publish(new SessionRevocation(UserId: id));
         await audit.RecordAsync(new AuditRecord(actor.Name, "user.delete", AuditOutcome.Success, actor.Ip, user.Username), ct);
     }
@@ -108,9 +106,8 @@ public sealed class UserService(
     public async Task SetPasswordAsync(long id, string password, Actor actor, CancellationToken ct)
     {
         PasswordPolicy.ValidateStrength(password);
-        var user = await users.FindByIdAsync(id, ct) ?? throw AppException.NotFound("User");
-        user.SetPasswordHash(await hasher.HashAsync(password, ct), time.GetUtcNow());
-        await users.UpdateAsync(user, ct);
+        _ = await users.FindByIdAsync(id, ct) ?? throw AppException.NotFound("User");
+        await users.SetPasswordHashAsync(id, await hasher.HashAsync(password, ct), time.GetUtcNow(), ct);
         await sessions.RevokeForUserAsync(id, null, ct);
         await audit.RecordAsync(new AuditRecord(actor.Name, "user.set_password", AuditOutcome.Success, actor.Ip, id.ToString(System.Globalization.CultureInfo.InvariantCulture)), ct);
     }

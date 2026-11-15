@@ -17,9 +17,24 @@ public interface IUserRepository
     /// <summary>Inserts and returns the user with its generated id. Throws <see cref="UsernameTakenException"/> on a duplicate.</summary>
     Task<User> AddAsync(User user, CancellationToken ct);
 
-    Task UpdateAsync(User user, CancellationToken ct);
-    Task DeleteAsync(long id, CancellationToken ct);
+    /// <summary>
+    /// Writes ONLY the password columns (never the role / disabled / logs flags: a slow hash must not undo a concurrent
+    /// demotion - red-team F-03).
+    /// </summary>
+    Task SetPasswordHashAsync(long id, string passwordHash, DateTimeOffset now, CancellationToken ct);
+
+    /// <summary>
+    /// Applies the patch to ONLY the patched columns and enforces the last-active-admin rule atomically with the write
+    /// (red-team F-03/F-04). <see cref="UserMutation.User"/> is null when the user does not exist.
+    /// </summary>
+    Task<UserMutation> PatchGuardedAsync(long id, UserPatch patch, CancellationToken ct);
+
+    /// <summary>Deletes the user unless that would remove the last active admin (atomic with the check).</summary>
+    Task<UserMutation> DeleteGuardedAsync(long id, CancellationToken ct);
 }
+
+/// <summary>Outcome of a guarded user mutation; <see cref="LastAdminViolation"/> means nothing was written.</summary>
+public sealed record UserMutation(User? User, bool LastAdminViolation);
 
 public sealed class UsernameTakenException : Exception
 {

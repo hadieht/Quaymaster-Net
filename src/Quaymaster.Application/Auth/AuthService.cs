@@ -101,8 +101,7 @@ public sealed class AuthService(
 
         throttle.OnSuccess(context.User.Username, key);
         var user = await users.FindByIdAsync(context.User.Id, ct) ?? throw AppException.Unauthorized();
-        user.SetPasswordHash(await hasher.HashAsync(newPassword, ct), time.GetUtcNow());
-        await users.UpdateAsync(user, ct);
+        await users.SetPasswordHashAsync(user.Id, await hasher.HashAsync(newPassword, ct), time.GetUtcNow(), ct);
         await sessions.RevokeForUserAsync(user.Id, context.Session.IdHash, ct);
         await audit.RecordAsync(new AuditRecord(user.Username, "auth.password_change", AuditOutcome.Success, actor.Ip), ct);
     }
