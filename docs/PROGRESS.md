@@ -461,3 +461,24 @@ Screenshots: `npm run screenshots` runs from a neutral copy of the fixtures (`/s
 vite.config.ts needed no change (default proxy target `http://127.0.0.1:8787` = .NET default port; `QM_DEV_API` overrides). README has the dev workflow.
 
 Gap: no dedicated integration tests for the five new endpoints (verified live with curl + the UI screenshots).
+
+## T6c — Docker image verified, CLI parity, deploy artifacts (forge, 2026-11-15) — **COMPLETE**
+
+**Image.** `docker build -t quaymaster-net:dev .` failed at `dotnet publish` (CA1861/CA1001 as errors): `.editorconfig` was not copied into the build stage. Fixed. Further defects found by running the image:
+
+1. **No `WORKDIR`** → ContentRoot was `/`, `appsettings.json` was never read, so EF Core/ASP.NET logged every SQL command at Information. `WORKDIR /app` fixes it (same requirement for the systemd unit's `WorkingDirectory`).
+2. **Data dir not owned by uid 10001** → a fresh named volume would have been root-owned and unwritable. `/var/lib/quaymaster-net` is now created and chowned in the image (verified with the hardened compose + named volume).
+3. Missing image defaults/parity with the original: `QM_HOST=0.0.0.0`, `QM_PORT`, `QM_DATA_DIR`, `HOME=/tmp`, `DOCKER_CONFIG=/tmp/.docker`, `USER 10001:10001`, `HEALTHCHECK` (curl `/healthz`), OCI labels.
+
+`docker-compose.yml` rewritten to the original's deploy shape: `127.0.0.1` bind (`DEPLOY_BIND`/`DEPLOY_PORT`), `DOCKER_GID` required (was default `0` = root group), `read_only` + `/tmp` tmpfs, `cap_drop: ALL`, `no-new-privileges`, mem/cpu/pids limits, optional `.env`.
+New `docs/DEPLOY.md` (container + native + differences from the Node original).
+
+**Verification (in the image, real socket, fixtures only).** Playwright e2e pointed at the container (`E2E_BASE_URL=http://127.0.0.1:18787`, setup token read from the data volume): **9/9 passed** twice — (a) plain `docker run --network host --group-add <docker gid>`, (b) `docker compose up` with the hardened file (`read_only=true`, `CapDrop=[ALL]`, `user=10001:10001`, `GroupAdd=[984]`, health `healthy`). That covers SPA served, `/healthz`, first-run setup (token → admin), login, wrong-password, containers list from the real socket, compose projects, images, storage, logs, settings and the full update flow for `qmtest-upd` (run `completed`, "now on sha256:ae671526f290"; the compose maintenance action ran `docker compose up` from the in-image CLI: Docker 29.1.3 / Compose 2.40.3). curl: unauthenticated `/api/v1/containers` 401, login 200, authenticated list returned the 11 `qmtest-*` containers (scope applied).
+**CLI parity.** `gen-secret` → `QM_SECRET_KEY=<base64 32B>`, `hash-password <pw>` / stdin → `QM_ADMIN_PASSWORD_HASH='scrypt$131072$8$1$…'`, short password → `error: Password must be at least 12 characters long`, rc 1 (identical formats to `server/src/cli.ts`). `backup`/`restore`/`check` of the original CLI are not implemented (documented).
+**systemd.** `deploy/quaymaster-net.service`: hardening lines unchanged vs the original (diff shows only paths/ExecStart/env); added `QM_WEB_DIR`, `HOME`, `DOTNET_*` env. `systemd-analyze verify` clean; the published layout (`docker cp` of `/app`) was run for real as a transient unit with the same sandbox properties (`ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `NoNewPrivileges`, … as `nobody`+`docker` group): `/healthz` ok, SPA served, DB written under ReadWritePaths. Unit and temp dirs removed afterwards.
+
+**Known limits / follow-ups.**
+- One early in-image update run (first attempt, before any of the above changes, on a long-lived fixture stack) failed with "container … disappeared" and a failed rollback; it was not reproducible in 5 later fresh runs (3× host-network, 1× full suite, 1× hardened compose). Suspect: `PostDeployLive` falls back to the old container id when the daemon still lists only the replaced container right after `compose up` (RunExecutor.Deploy.cs). Not changed in this task.
+- Every EF query logs the warning "First/FirstOrDefault without OrderBy" (noise at `warn`). Cosmetic.
+- `.github/workflows/ci.yml` smoke step uses a non-existent `--healthz-only` flag and no `QM_SECRET_KEY`/`-p`; T6d owns CI.
+- If `QM_VISIBLE_SCOPE` hides Quaymaster's own container, self-detection fails closed and mutations are refused (documented in DEPLOY.md).

@@ -12,7 +12,10 @@ Group=quaymaster
 SupplementaryGroups=docker
 WorkingDirectory=/opt/quaymaster-net
 EnvironmentFile=/etc/quaymaster-net.env
-Environment=QM_DATA_DIR=/var/lib/quaymaster-net
+# WorkingDirectory must be the publish dir: ASP.NET reads appsettings.json (log filters) from it.
+Environment=QM_DATA_DIR=/var/lib/quaymaster-net QM_WEB_DIR=/opt/quaymaster-net/web/dist
+# Compose CLI reads $HOME/.docker; ProtectHome hides the real home, so keep it inside the data dir.
+Environment=HOME=/var/lib/quaymaster-net DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_EnableDiagnostics=0
 ExecStart=/usr/bin/dotnet /opt/quaymaster-net/Quaymaster.Api.dll
 Restart=on-failure
 RestartSec=5
