@@ -20,15 +20,15 @@ DOCKER_GID=$(stat -c %g /var/run/docker.sock) docker compose up -d --build
 
 Image layout:
 
-| What           | Where                                                                                 |
-| -------------- | ------------------------------------------------------------------------------------- |
-| Published API  | `/app` (`WORKDIR`; `dotnet /app/Quaymaster.Api.dll`, PID 1 is `tini`)                 |
-| Built SPA      | `/app/web/dist` (`QM_WEB_DIR`)                                                        |
-| Data (SQLite)  | `/var/lib/quaymaster-net` (`QM_DATA_DIR`, `VOLUME`, owned by uid 10001)               |
-| User           | uid/gid 10001 (`quaymaster`), no home; `HOME=/tmp`, `DOCKER_CONFIG=/tmp/.docker`      |
-| Listen         | `QM_HOST=0.0.0.0`, `QM_PORT=8787` (image defaults; exposure is the port mapping)      |
-| Docker clients | `docker` CLI + `docker compose` plugin (Compose maintenance actions shell out to it)  |
-| Health         | `HEALTHCHECK` curls `/healthz`                                                        |
+| What           | Where                                                                                |
+| -------------- | ------------------------------------------------------------------------------------ |
+| Published API  | `/app` (`WORKDIR`; `dotnet /app/Quaymaster.Api.dll`, PID 1 is `tini`)                |
+| Built SPA      | `/app/web/dist` (`QM_WEB_DIR`)                                                       |
+| Data (SQLite)  | `/var/lib/quaymaster-net` (`QM_DATA_DIR`, `VOLUME`, owned by uid 10001)              |
+| User           | uid/gid 10001 (`quaymaster`), no home; `HOME=/tmp`, `DOCKER_CONFIG=/tmp/.docker`     |
+| Listen         | `QM_HOST=0.0.0.0`, `QM_PORT=8787` (image defaults; exposure is the port mapping)     |
+| Docker clients | `docker` CLI + `docker compose` plugin (Compose maintenance actions shell out to it) |
+| Health         | `HEALTHCHECK` curls `/healthz`                                                       |
 
 - **Socket without root.** The image never bakes in a GID. `group_add: [$DOCKER_GID]` (compose) or
   `--group-add $(stat -c %g /var/run/docker.sock)` (plain `docker run`) grants the socket group at run time.

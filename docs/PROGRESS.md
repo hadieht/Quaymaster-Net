@@ -10,12 +10,12 @@ settled, open questions). A retry of a phase reads this file first and
 - .NET 10, nullable enabled, warnings as errors, CPM (Directory.Packages.props).
 - Layers: Domain (pure) → Application (use cases/DTOs/abstractions) →
   Infrastructure (adapters) → Api (endpoints/middleware only).
-- API contract = 1:1 port of /root/projects/quaymaster (read its
+- API contract = 1:1 port of the original quaymaster repository (read its
   docs/API.md, docs/SECURITY-MODEL.md, server/src/ for exact behaviour).
   The frontend (web/) is copied unmodified and MUST keep working without
   changes: same routes, same JSON, same error envelope, same cookie/CSRF,
   same SSE event names.
-- Reference implementation (behaviour spec): /root/projects/quaymaster.
+- Reference implementation (behaviour spec): the original quaymaster repository.
   Port behaviour, not code.
 
 ## Phase 0 — scaffold (atlas, 2026-11-14)
@@ -430,13 +430,13 @@ npm run build                          green
 ## T6a — run-serialisation guard race (forge, 2026-11-15) — **COMPLETE**
 
 **The race.** A run holds the `maintenance` operation lock (`OperationManager._locks`) for the whole `Run` delegate. The terminal status (`completed`/`failed`/`rolled_back`…)
-is written by `RecordAsync`/the standalone executor *inside* that delegate, which then still did the update-status refresh, the audit write, the log line and the
+is written by `RecordAsync`/the standalone executor _inside_ that delegate, which then still did the update-status refresh, the audit write, the log line and the
 notification dispatch (T5) before returning — only then was the lock released. A client that saw `completed` and immediately approved the next run got 409
 ("Another operation … is already running on maintenance") although no run was executing. Deterministic in the isolated
 `Overlapping_runs_…` test (4/4 before the fix).
 
 **The fix.** `IOperationContext.ReleaseLock()` (idempotent, only releases if this operation still holds the key); `OperationManager.RunAsync` uses it for its own release.
-`RunExecutor.RecordAsync` and `StandaloneExecutor` call `ctx.ReleaseLock()` immediately *before* `runs.FinishAsync`. Overlap safety is unchanged: until the terminal status is
+`RunExecutor.RecordAsync` and `StandaloneExecutor` call `ctx.ReleaseLock()` immediately _before_ `runs.FinishAsync`. Overlap safety is unchanged: until the terminal status is
 written the row is `running`, and `RunService.EnsureNoRunActiveAsync` (store-backed `RunningAsync`) refuses the second start; after it, nothing blocks. No wire-format change.
 The unit fake (`FakeRunStore.OtherRunExecuting`) now simulates the foreign running run for `Overlapping_runs_are_serialised_a_second_start_now…`, which was still mocking the
 old lock-based check (stale since the 567a5a3 checkpoint).
@@ -478,7 +478,69 @@ New `docs/DEPLOY.md` (container + native + differences from the Node original).
 **systemd.** `deploy/quaymaster-net.service`: hardening lines unchanged vs the original (diff shows only paths/ExecStart/env); added `QM_WEB_DIR`, `HOME`, `DOTNET_*` env. `systemd-analyze verify` clean; the published layout (`docker cp` of `/app`) was run for real as a transient unit with the same sandbox properties (`ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `NoNewPrivileges`, … as `nobody`+`docker` group): `/healthz` ok, SPA served, DB written under ReadWritePaths. Unit and temp dirs removed afterwards.
 
 **Known limits / follow-ups.**
+
 - One early in-image update run (first attempt, before any of the above changes, on a long-lived fixture stack) failed with "container … disappeared" and a failed rollback; it was not reproducible in 5 later fresh runs (3× host-network, 1× full suite, 1× hardened compose). Suspect: `PostDeployLive` falls back to the old container id when the daemon still lists only the replaced container right after `compose up` (RunExecutor.Deploy.cs). Not changed in this task.
 - Every EF query logs the warning "First/FirstOrDefault without OrderBy" (noise at `warn`). Cosmetic.
 - `.github/workflows/ci.yml` smoke step uses a non-existent `--healthz-only` flag and no `QM_SECRET_KEY`/`-p`; T6d owns CI.
 - If `QM_VISIBLE_SCOPE` hides Quaymaster's own container, self-detection fails closed and mutations are refused (documented in DEPLOY.md).
+
+## T6d — CI local-pass, repo hygiene, Betterleaks (forge, 2026-11-15) — **COMPLETE**
+
+**Secret scan: Gitleaks → Betterleaks.** `ghcr.io/betterleaks/betterleaks:v2` and `:latest` do not resolve on this network (`manifest unknown`); `:v1` / `:v1.10.1` do (`betterleaks version` → `1.10.1`).
+CI pins **`:v1.10.1`** (reproducible) and runs `git --no-banner --redact -c /repo/.betterleaks.toml /repo` (full history, `fetch-depth: 0`). `.gitleaks.toml` was replaced by `.betterleaks.toml`
+(v1 reads the gitleaks TOML schema: `[extend] useDefault`, `[[allowlists]]` with `condition = "AND"`, `paths`, `targetRules`). The old file still pointed at paths of the Node original (`server/test/...`);
+the new allow-list names the real .NET/e2e test files and the `qmtest-secrets` fixture, always path AND rule scoped (fake passwords/credential URIs only).
+Without the config the scan reported 28 findings (all `generic-password`/`generic-credential-uri` in tests, `scripts/smoke-t1.sh`, the qmtest-secrets fixture — invented values); with it: `INF no leaks found`, rc 0.
+Negative control (temp repo with an AWS-style key and a GitHub-token-shaped string, same config): `WRN leaks found: 1`, rc 1 — the allow-list does not blind the scan outside the listed paths.
+
+**CI, every step run locally in order** (`.github/workflows/ci.yml`):
+
+| Job / step                                        | Local result                                                                                        |
+| ------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| dotnet: `dotnet build -c Release`                 | Build succeeded, 0 warnings, 0 errors (1m30s)                                                       |
+| dotnet: `dotnet test -c Release` (incl. live)     | Unit 648/648, Integration 289/289, 0 skipped (6m22s)                                                |
+| dotnet: `docker build -t quaymaster-net:ci .`     | rc 0                                                                                                |
+| dotnet: image smoke (gen-secret + healthz)        | step script extracted from ci.yml and run: rc 0 (`/healthz` → `{"status":"ok"}`), container removed |
+| web: `npm ci` / `typecheck` / `test` / `build`    | rc 0 / rc 0 / 28 tests passed / rc 0                                                                |
+| web: `npm run lint`                               | **failed first** (prettier: docs/DEPLOY.md, docs/PROGRESS.md unformatted) → formatted → rc 0        |
+| secret-scan: Betterleaks `:v1.10.1`, full history | no leaks found, rc 0                                                                                |
+
+CI change: the smoke step used a non-existent `--healthz-only` flag and no `QM_SECRET_KEY` (it could never pass). It now runs `gen-secret` inside the image, starts the container with that key on
+`127.0.0.1:18787` (no Docker socket), polls `/healthz` for up to 30 s, and always removes the container (trap). Not run on GitHub itself (no push) — the workflow is validated as YAML and by executing its scripts locally.
+
+**Hygiene.**
+
+- Removed `tests/DebugDbInit` (a stray debug console project, not in the solution, with absolute `/root/projects/...` paths).
+- Host-specific data: grep for `/root/`, `/home/<user>`, hostnames, container/project names of the dev host and non-loopback IPs finds nothing outside `test-fixtures/` except synthetic RFC1918/`*.local`/`*.lan` literals in unit/integration tests of the SSRF/outbound policy and trusted-proxy parsing (`10.0.0.5`, `192.168.1.x`, `ntfy.home.lan` …: required test inputs, not host data) and `docker.n8n.io` in `RegistryClient` (a public registry→auth-service mapping inherited from the original).
+  PROGRESS.md's two `/root/projects/quaymaster` mentions now say "the original quaymaster repository". Fixed `hadiieht` typos in README/SECURITY (repo owner is `hadieht`).
+- `git ls-files | grep -E '(^|/)(bin|obj|node_modules|dist)/|\.db$|\.env$|setup-token'` → empty. `.gitignore` covers bin/obj/node_modules/dist/.local/db/.env/pem.
+- LICENSE untouched. `.env.example` lists exactly the 46 `QM_*` names of `QmConfigLoader` (diff both ways empty).
+- README quick start (workflow B) followed from a clean checkout state: `QM_WEB_DIR=… QM_DATA_DIR=… QM_SECRET_KEY=… dotnet run` → `/healthz` ok, SPA index served, `/api/v1/auth/status` → `{"setupRequired":true,…}`, setup token printed. Defect found: a relative `QM_DATA_DIR=.local/dev-data` resolves against `src/Quaymaster.Api` (dotnet run's cwd), not the repo root → README now uses `"$PWD/.local/dev-data"`.
+- **AGENTS.md: NOT created.** The write was refused by the environment's protected-file guard (approval prompt timed out; silence is not consent), so I did not retry or work around it. The intended content is a short adaptation of the original's AGENTS.md (layout, commands, qmtest-* safety rules). Needs a human to approve / add it.
+
+## T6 — consolidated result (T6a–T6d)
+
+| Original T6 scope item                      | Status   | Evidence                                                                                               |
+| ------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------ |
+| Full test suite green incl. live            | **PASS** | T6a fix; T6d re-run: unit 648/648, integration 289/289, build 0 warnings                               |
+| Playwright e2e green                        | **PASS** | T6b `npm run e2e` 9/9 (host); T6c 9/9 in the image, plain and hardened compose. Not re-run in T6d      |
+| Screenshots regenerated, neutral            | **PASS** | T6b: 11 PNGs from `/srv/qmtest/test-fixtures` copy                                                     |
+| Docker image builds and runs vs real socket | **PASS** | T6c; T6d `docker build` rc 0 + smoke rc 0                                                              |
+| CLI parity (gen-secret, hash-password)      | PARTIAL  | both work; original's `backup`/`restore`/`check` subcommands not implemented (documented in DEPLOY.md) |
+| systemd unit / deploy docs                  | **PASS** | T6c: `systemd-analyze verify` clean, sandboxed transient unit ran                                      |
+| CI passes locally, step by step             | **PASS** | table above; not executed on GitHub Actions                                                            |
+| Secret scan with Betterleaks, 0 findings    | **PASS** | `:v1.10.1`, history clean; caveat: v2 images not resolvable here, so pinned to v1                      |
+| Repo hygiene (no host data / artifacts)     | **PASS** | greps above; `git ls-files` clean                                                                      |
+| LICENSE / .env.example                      | **PASS** | verified                                                                                               |
+| AGENTS.md                                   | **FAIL** | blocked by protected-file approval guard; not created                                                  |
+| README quick start works                    | **PASS** | followed live; data-dir path bug fixed                                                                 |
+
+**Still broken / for the red team (T7).**
+
+- AGENTS.md missing (see above).
+- Suspected race in `PostDeployLive` (RunExecutor.Deploy.cs): one early in-image update run failed with "container … disappeared" + failed rollback; not reproduced in 5+ later runs.
+- Five endpoints added in T6b (`/system/settings`, `/auth/sessions` GET/DELETE, `/maintenance/cron/preview`, `/stats/overview`) have no integration tests.
+- EF "First/FirstOrDefault without OrderBy" warning logged on every query (cosmetic).
+- `backup`/`restore`/`check` CLI subcommands absent.
+- Betterleaks pinned to v1.10.1 (v2 tags not pullable on this host); the workflow itself has never run on GitHub.
+- `npm ci` prints an EBADENGINE warning under Node 22.22.1 (non-fatal; CI uses node 22).

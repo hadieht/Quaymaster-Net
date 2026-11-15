@@ -38,8 +38,8 @@ Two workflows:
 
 ```sh
 npm install
-# terminal 1 — API on 127.0.0.1:8787 (default QM_PORT), data in ./.local/dev-data
-QM_DATA_DIR=.local/dev-data QM_SECRET_KEY="$(openssl rand -base64 32)" \
+# terminal 1 — API on 127.0.0.1:8787 (default QM_PORT), data in $PWD/.local/dev-data (relative paths resolve against the project dir)
+QM_DATA_DIR="$PWD/.local/dev-data" QM_SECRET_KEY="$(openssl rand -base64 32)" \
   dotnet run --project src/Quaymaster.Api --no-launch-profile
 # terminal 2 — Vite on http://127.0.0.1:5173, proxies /api to the API
 npm run dev -w web
@@ -53,7 +53,7 @@ Open the Vite URL (5173), not the API port.
 
 ```sh
 npm run build                      # shared + web -> web/dist
-QM_WEB_DIR="$PWD/web/dist" QM_DATA_DIR=.local/dev-data QM_SECRET_KEY="$(openssl rand -base64 32)" \
+QM_WEB_DIR="$PWD/web/dist" QM_DATA_DIR="$PWD/.local/dev-data" QM_SECRET_KEY="$(openssl rand -base64 32)" \
   dotnet run --project src/Quaymaster.Api --no-launch-profile   # http://127.0.0.1:8787
 ```
 

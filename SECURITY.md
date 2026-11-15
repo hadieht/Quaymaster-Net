@@ -21,6 +21,6 @@ Report vulnerabilities privately via GitHub security advisories.
 
 ## Reporting
 
-Use [GitHub's private vulnerability reporting](https://github.com/hadiieht/quaymaster-net/security/advisories/new).
+Use [GitHub's private vulnerability reporting](https://github.com/hadieht/quaymaster-net/security/advisories/new).
 Response targets: acknowledgement within 48h, patch target within 30 days
 for critical.

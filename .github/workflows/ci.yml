@@ -21,9 +21,17 @@ jobs:
         run: docker build -t quaymaster-net:ci .
       - name: Image smoke test (no Docker socket)
         run: |
-          docker run --rm --entrypoint dotnet quaymaster-net:ci /app/Quaymaster.Api.dll --urls http://127.0.0.1:18787 --healthz-only 2>/dev/null &
-          sleep 5
-          curl -sf http://127.0.0.1:18787/healthz | grep -q '"status":"ok"'
+          set -eu
+          secret="$(docker run --rm quaymaster-net:ci dotnet /app/Quaymaster.Api.dll gen-secret | sed -n 's/^QM_SECRET_KEY=//p')"
+          test -n "$secret"
+          cid="$(docker run -d -p 127.0.0.1:18787:8787 -e QM_SECRET_KEY="$secret" quaymaster-net:ci)"
+          trap 'docker rm -f "$cid" >/dev/null' EXIT
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:18787/healthz | grep -q '"status":"ok"'; then exit 0; fi
+            sleep 1
+          done
+          docker logs "$cid"
+          exit 1
 
   web:
     runs-on: ubuntu-latest
@@ -45,6 +53,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: gitleaks (full history)
+      - name: betterleaks (full history)
         run: |
-          docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:latest detect --source /repo --redact --no-banner
+          docker run --rm -v "$PWD:/repo" ghcr.io/betterleaks/betterleaks:v1.10.1 \
+            git --no-banner --redact -c /repo/.betterleaks.toml /repo
