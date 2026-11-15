@@ -15,13 +15,6 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
-      - name: Start test fixtures (Docker Compose)
-        env:
-          DOCKER_GID: '999'
-        run: |
-          cd test-fixtures
-          docker compose up -d --wait
-          cd ..
       - run: dotnet build -c Release
       - run: dotnet test -c Release
       - name: Docker image build (no push)
