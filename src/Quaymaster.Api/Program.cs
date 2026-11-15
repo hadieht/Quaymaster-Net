@@ -25,7 +25,8 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Ensure console logging is enabled early so we see startup logs
 builder.Logging.ClearProviders();
-builder.Logging.AddConsole();
+builder.Logging.AddConsole(o => o.FormatterName = ScrubbingConsoleFormatter.FormatterName);
+builder.Logging.AddConsoleFormatter<ScrubbingConsoleFormatter, Microsoft.Extensions.Logging.Console.ConsoleFormatterOptions>();
 
 // --- Configuration: the full QM_* surface, validated once, failing fast with every problem listed. -----------------
 QmConfig config;
@@ -106,6 +107,7 @@ if (webDir is not null)
 }
 
 app.UseRouting();
+app.UseMiddleware<ResponseScrubMiddleware>(); // F-01: learned-secret scrub of JSON API responses
 app.UseMiddleware<ApiGuardMiddleware>();
 
 var api = app.MapGroup("/api/v1");

@@ -86,6 +86,9 @@ public sealed partial class FakeDocker : IDockerEngine, IDockerCommands, ICompos
                 ["Image"] = summary["Image"]!.GetValue<string>(),
                 ["Tty"] = false,
                 ["Env"] = new JsonArray("PATH=/usr/bin", "DB_PASSWORD=" + Secret, "LANG=C"),
+                // A command / healthcheck that echoes the secret (red-team F-01: `mysqladmin ping -p$PASSWORD`).
+                ["Cmd"] = new JsonArray("sh", "-c", "echo starting with " + Secret),
+                ["Healthcheck"] = new JsonObject { ["Test"] = new JsonArray("CMD-SHELL", "ping -p" + Secret) },
                 ["Labels"] = labels,
             },
             ["HostConfig"] = new JsonObject(),

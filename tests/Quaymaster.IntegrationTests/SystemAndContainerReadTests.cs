@@ -100,6 +100,16 @@ public sealed class SystemAndContainerReadTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Learned_Secret_Echoed_In_Cmd_And_Healthcheck_Never_Reaches_A_Viewer()
+    {
+        // F-01: the env value is learned; Cmd / Healthcheck.Test carry it too and key-based redaction cannot see that.
+        var r = await _h.Viewer.GetAsync("/containers/web");
+        r.Status.Should().Be(200);
+        r.Body.Should().NotContain(FakeDocker.Secret);
+        r.Body.Should().Contain("echo starting with");
+    }
+
+    [Fact]
     public async Task Container_Ref_Validation_And_Unknown()
     {
         (await _h.Viewer.GetAsync("/containers/nope")).Status.Should().Be(404);

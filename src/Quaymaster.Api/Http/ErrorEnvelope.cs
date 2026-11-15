@@ -42,8 +42,11 @@ public static class ErrorEnvelopeWriter
             }
         }
 
-        return response.WriteAsync(
-            JsonSerializer.Serialize(new ErrorEnvelope(new ErrorBody(code.ToWire(), message, details)), Options),
-            context.RequestAborted);
+        // F-10: learned secrets and token patterns never leave in an error message (the original scrubbed + redacted here).
+        var scrubber = context.RequestServices.GetService<Quaymaster.Domain.Redaction.Scrubber>();
+        var json = JsonSerializer.Serialize(
+            new ErrorEnvelope(new ErrorBody(code.ToWire(), scrubber is null ? message : scrubber.Clean(message), details)),
+            Options);
+        return response.WriteAsync(scrubber is null ? json : scrubber.Scrub(json), context.RequestAborted);
     }
 }
