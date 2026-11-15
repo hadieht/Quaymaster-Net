@@ -1,0 +1,26 @@
+# Betterleaks configuration for quaymaster-net.
+# Start from the full default ruleset; nothing is disabled globally.
+[extend]
+useDefault = true
+
+# Quaymaster redacts secrets and tests auth, so tests/fixtures/scripts must hold
+# fake password-looking strings. Each allowlist is limited to exact paths AND
+# exact rules (condition = AND). A secret of any other kind (private keys, cloud
+# tokens, ...) in these files, or any finding elsewhere, still fails the scan.
+# All values in these files are invented test data, not credentials.
+
+[[allowlists]]
+description = "Fake passwords in .NET/e2e tests and smoke scripts"
+condition = "AND"
+paths = [
+  '''^tests/Quaymaster\.(Unit|Integration)Tests/.*\.cs$''',
+  '''^e2e/[^/]+\.spec\.ts$''',
+  '''^scripts/smoke-t1\.sh$''',
+]
+targetRules = ["generic-password", "generic-api-key", "generic-credential-uri", "curl-auth-user", "curl-auth-header", "jwt"]
+
+[[allowlists]]
+description = "Fake label secret / credential URI in the redaction (RT-04) compose fixture"
+condition = "AND"
+paths = ['''^test-fixtures/stacks/qmtest-secrets/compose\.yaml$''']
+targetRules = ["generic-api-key", "generic-password", "generic-credential-uri"]

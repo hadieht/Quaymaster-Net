@@ -1,6 +1,6 @@
 # Quaymaster (.NET)
 
-Self-hosted Docker dashboard — the same product as [quaymaster](https://github.com/hadiieht/quaymaster),
+Self-hosted Docker dashboard — the same product as [quaymaster](https://github.com/hadieht/quaymaster),
 rebuilt on a **modern .NET 10 backend** with an unchanged React frontend.
 
 > **Status: in progress.** The API contract is a 1:1 port of the original
