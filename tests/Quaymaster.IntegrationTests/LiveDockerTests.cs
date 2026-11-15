@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using Quaymaster.IntegrationTests.Support;
 
 namespace Quaymaster.IntegrationTests;
@@ -18,6 +19,17 @@ public sealed class LiveDockerTests : IDisposable
     public void Dispose() => _factory?.Dispose();
 
     private static bool DaemonReachable() => File.Exists(Socket) && Run("docker", "version", "--format", "{{.Server.Version}}").Code == 0;
+
+    private static string RepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "Quaymaster.slnx")))
+        {
+            dir = dir.Parent;
+        }
+
+        return dir?.FullName ?? throw new InvalidOperationException("repository root not found");
+    }
 
     private static (int Code, string Out) Run(params string[] argv)
     {
@@ -60,6 +72,9 @@ public sealed class LiveDockerTests : IDisposable
         {
             return;
         }
+
+        // Ensure at least the base fixtures are up so there are containers to inspect
+        Run("bash", Path.Combine(RepoRoot(), "test-fixtures", "scripts", "up.sh"), "multi", "single", "secrets", "standalone");
 
         var admin = await AdminAsync(readOnly: true);
         var containers = await admin.GetAsync("/containers");
