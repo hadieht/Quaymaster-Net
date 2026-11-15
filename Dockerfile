@@ -25,7 +25,7 @@ RUN npm run build
 # ---- dotnet: publish the API -------------------------------------------------------------------
 FROM ${SDK_IMAGE} AS build
 WORKDIR /src
-COPY Directory.Build.props Directory.Packages.props ./
+COPY Directory.Build.props Directory.Packages.props .editorconfig ./
 COPY src/Quaymaster.Domain/Quaymaster.Domain.csproj src/Quaymaster.Domain/
 COPY src/Quaymaster.Application/Quaymaster.Application.csproj src/Quaymaster.Application/
 COPY src/Quaymaster.Infrastructure/Quaymaster.Infrastructure.csproj src/Quaymaster.Infrastructure/
