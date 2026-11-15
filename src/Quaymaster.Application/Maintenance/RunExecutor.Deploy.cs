@@ -485,6 +485,7 @@ public sealed partial class RunExecutor
         var summary = ExecutionRules.Summary(status, plan.Target, outcomes.Count(o => o.Outcome == ServiceOutcomes.Updated), reason);
         var step = await runs.StartStepAsync(runId, 9999, null, "record", Now(), CancellationToken.None);
         await runs.FinishStepAsync(step, "succeeded", Obj(new { status }), Now(), CancellationToken.None);
+        ctx.ReleaseLock(); // the terminal status below is the signal that the next run may start
         await runs.FinishAsync(runId, status, new RunResult(outcomes, summary), guidance.Count > 0 ? guidance : null, reason, Now(), CancellationToken.None);
         env.Invalidate();
         try

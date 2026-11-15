@@ -272,6 +272,10 @@ internal sealed class FakeOperationContext : IOperationContext
     public void Log(string text) => Output.Add(text);
 
     public bool ShuttingDown { get; set; }
+
+    public void ReleaseLock()
+    {
+    }
 }
 
 /// <summary>Image engine double: user tags, staged tags, ids. Records the ORDER of every mutation.</summary>

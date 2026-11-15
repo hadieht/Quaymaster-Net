@@ -41,6 +41,12 @@ public interface IOperationContext
 
     /// <summary>True once a graceful shutdown started: long runs must not begin new steps (RT-14).</summary>
     bool ShuttingDown { get; }
+
+    /// <summary>
+    /// Releases this operation's lock key early (idempotent). Work whose result is visible elsewhere (a run's terminal status)
+    /// calls it just before publishing that result, so a follower started on seeing the result is never refused by a stale lock.
+    /// </summary>
+    void ReleaseLock();
 }
 
 public sealed record OperationStart(
@@ -148,7 +154,7 @@ public sealed partial class OperationManager(IOperationStore store, Scrubber scr
             throw;
         }
 
-        var context = new Context(this, id, live);
+        var context = new Context(this, id, live, operation.LockKey);
         _ = Task.Run(() => RunAsync(operation, context, live), CancellationToken.None);
         return id;
     }
@@ -170,10 +176,7 @@ public sealed partial class OperationManager(IOperationStore store, Scrubber scr
 
         // Release the lock as soon as the work is done, so other operations on the same key can start.
         // The operation result is persisted afterwards; the lock only serialises the work itself.
-        lock (_gate)
-        {
-            _locks.Remove(operation.LockKey);
-        }
+        context.ReleaseLock();
 
         try
         {
@@ -253,8 +256,19 @@ public sealed partial class OperationManager(IOperationStore store, Scrubber scr
         }
     }
 
-    private sealed class Context(OperationManager owner, string id, Live live) : IOperationContext
+    private sealed class Context(OperationManager owner, string id, Live live, string lockKey) : IOperationContext
     {
+        public void ReleaseLock()
+        {
+            lock (owner._gate)
+            {
+                if (owner._locks.TryGetValue(lockKey, out var holder) && holder == Id)
+                {
+                    owner._locks.Remove(lockKey);
+                }
+            }
+        }
+
         public string Id { get; } = id;
 
         public bool ShuttingDown => owner._shuttingDown;

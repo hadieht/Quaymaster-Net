@@ -402,6 +402,7 @@ public sealed class StandaloneExecutor(
         }
 
         var outcome = status switch { RunStatuses.Completed => "updated", RunStatuses.RolledBack => "rolled_back", _ => "failed" };
+        ctx.ReleaseLock(); // the terminal status below is the signal that the next run may start
         await runs.FinishAsync(runId, status, new RunResult([new ServiceResult(p.Name, outcome, reason ?? string.Empty)], reason ?? status), guidance.Count > 0 ? guidance : null, reason, Now(), CancellationToken.None);
         containers.Invalidate();
         await gateway.RecordAsync(
