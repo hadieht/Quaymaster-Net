@@ -558,7 +558,8 @@ public sealed partial class ComposeService(
         await gateway.AssertProjectAsync(name, refs is null ? null : new ProjectRefs(refs.Volumes, refs.Networks, refs.Containers), service is not null, ct);
         if (service is not null)
         {
-            foreach (var c in (await RawContainersAsync(name, false, ct)).Where(c => c.Service == service))
+            // F-09: the safety asserts must see containers hidden by QM_VISIBLE_SCOPE / the ignore list too
+            foreach (var c in (await containers.ListEverythingFreshAsync(ct)).Where(c => c.Project == name && c.Service == service))
             {
                 await gateway.AssertContainerAsync(new ContainerRef(c.Id, c.Name, name), ct);
             }

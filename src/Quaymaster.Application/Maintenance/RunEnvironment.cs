@@ -10,6 +10,7 @@ using Quaymaster.Application.Safety;
 using Quaymaster.Domain.Compose;
 using Quaymaster.Domain.Maintenance;
 using Quaymaster.Domain.Redaction;
+using Quaymaster.Domain.Safety;
 
 namespace Quaymaster.Application.Maintenance;
 
@@ -69,7 +70,7 @@ public sealed class RunEnvironment(
     }
 
     public async Task<IReadOnlyList<EngineContainer>> ContainersAsync(CancellationToken ct) =>
-        [.. (await containers.ListRawAllAsync(true, ct)).Select(c => new EngineContainer(c.Id, c.Name, c.Project, c.Service, c.ImageId, c.State, c.Status))];
+        [.. (await containers.ListEverythingFreshAsync(ct)).Select(c => new EngineContainer(c.Id, c.Name, c.Project, c.Service, c.ImageId, c.State, c.Status))];
 
     public async Task<InspectLite?> InspectAsync(string containerId, CancellationToken ct)
     {
@@ -96,6 +97,16 @@ public sealed class RunEnvironment(
         ArgumentNullException.ThrowIfNull(log);
         var target = await compose.TargetAsync(project, ct);
         var argv = ComposeArgv.Build(target, new ComposeCommand.Up([service], true, forceRecreate, noStart));
+
+        // F-02: the same fence as a direct action - the project (and what it references) and EVERY container of the service
+        // (QM_PROTECTED, self, scope, hidden ones included) are checked right before the recreate.
+        var refs = DependencyGraphBuilder.References(await compose.ResolvedConfigForSafetyAsync(project, ct));
+        await gateway.AssertProjectAsync(project, new ProjectRefs(refs.Volumes, refs.Networks, refs.Containers), true, ct);
+        foreach (var c in (await containers.ListEverythingFreshAsync(ct)).Where(c => c.Project == project && c.Service == service))
+        {
+            await gateway.AssertContainerAsync(new ContainerRef(c.Id, c.Name, project), ct);
+        }
+
         try
         {
             var r = await gateway.RunComposeAsync(argv, new ComposeRunOptions(null, log), ct);

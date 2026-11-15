@@ -48,7 +48,19 @@ public sealed class HealthGate(IRunEnvironment env, IHttpProbe probe, HealthTimi
             var allOk = true;
             foreach (var id in containerIds)
             {
-                var c = await env.InspectAsync(id, ct);
+                InspectLite? c;
+                try
+                {
+                    c = await env.InspectAsync(id, ct);
+                }
+                catch (Exception e) when (e is Errors.AppException or HttpRequestException or IOException or TimeoutException)
+                {
+                    // F-06: a Docker blip is "no data yet" and retried until the deadline - then a timeout failure (rollback + guidance)
+                    allOk = false;
+                    last = $"Docker error while inspecting: {e.Message}";
+                    continue;
+                }
+
                 if (c is null)
                 {
                     return Fail($"container {Short(id)} disappeared");

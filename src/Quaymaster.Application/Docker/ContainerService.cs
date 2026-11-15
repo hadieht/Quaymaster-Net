@@ -40,6 +40,12 @@ public interface IContainerService
 
     Task<IReadOnlyList<ContainerInfo>> ListRawAllAsync(bool fresh, CancellationToken ct);
 
+    /// <summary>
+    /// EVERY container the daemon reports, read straight from the engine: no cache, no single-flight join (so it can never
+    /// return a list fetched before the caller's last mutation) and no visibility filter. For safety computations only.
+    /// </summary>
+    Task<IReadOnlyList<ContainerInfo>> ListEverythingFreshAsync(CancellationToken ct);
+
     Task<IReadOnlyList<ContainerSummaryDto>> ListAsync(CancellationToken ct);
 
     Task<IReadOnlyDictionary<string, ContainerExtras>> ExtrasAsync(IReadOnlyList<string> ids, CancellationToken ct);
@@ -110,13 +116,22 @@ public sealed class ContainerService(
                 return Task.FromResult(hit.Value);
             }
 
+            // F-05: a fresh read must never join a fetch that started before the caller's last mutation
+            if (fresh)
+            {
+                return FetchAsync(joinable: false).WaitAsync(ct);
+            }
+
             // single-flight; the shared fetch is not tied to one caller's cancellation
             _inflight ??= FetchAsync();
             return _inflight.WaitAsync(ct);
         }
     }
 
-    private async Task<IReadOnlyList<ContainerInfo>> FetchAsync()
+    public async Task<IReadOnlyList<ContainerInfo>> ListEverythingFreshAsync(CancellationToken ct) =>
+        (await engine.ListContainersAsync(ct)).Objects().Select(ContainerInfo.From).ToList();
+
+    private async Task<IReadOnlyList<ContainerInfo>> FetchAsync(bool joinable = true)
     {
         try
         {
@@ -133,9 +148,12 @@ public sealed class ContainerService(
         }
         finally
         {
-            lock (_gate)
+            if (joinable)
             {
-                _inflight = null;
+                lock (_gate)
+                {
+                    _inflight = null;
+                }
             }
         }
     }

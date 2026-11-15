@@ -246,6 +246,12 @@ public sealed class PlannerService(
                 {
                     dependentOf[e.From] = dependentOf.GetValueOrDefault(e.To, e.To);
                     grew = true;
+
+                    // F-02: a dependent is recreated with its provider, so it must pass the same fence as a selected service
+                    if (DependentRefusal(df, req, policy, self) is { } refusal)
+                    {
+                        return Empty("refused", $"{e.From} would be recreated together with {dependentOf[e.From]} ({e.Kind}) but is refused: {refusal}");
+                    }
                 }
             }
         }
@@ -304,7 +310,7 @@ public sealed class PlannerService(
         var sharing = new List<(ContainerInfo C, string? Project)>();
         var hidden = 0;
         // RT4-04: count EVERY container on the daemon, also ones hidden by the visible scope or the "stopped monitoring" list
-        foreach (var c in await containers.ListRawAllAsync(true, ct))
+        foreach (var c in await containers.ListEverythingFreshAsync(ct))
         {
             if (!myRefs.ContainsKey(KeyOf(c.Image)))
             {
@@ -427,6 +433,18 @@ public sealed class PlannerService(
     };
 
     /// <summary>Why a service cannot be a candidate (null = it can); the policy and registry checks come afterwards.</summary>
+    private static string? DependentRefusal(Facts f, PlanRequest req, SafetyPolicy policy, SelfInfo self)
+    {
+        if (f.Containers.Any(c => self.ContainerId is not null && c.Id == self.ContainerId))
+        {
+            return "this is the Quaymaster container itself; it never recreates itself";
+        }
+
+        return f.Containers
+            .Select(c => policy.ContainerRefusal(new ContainerRef(c.Id, c.Name, req.Project)))
+            .FirstOrDefault(r => r is not null)?.Message;
+    }
+
     private static string? ExclusionReason(Facts f, PlanRequest req, SafetyPolicy policy, SelfInfo self)
     {
         if (f.Containers.Count == 0)

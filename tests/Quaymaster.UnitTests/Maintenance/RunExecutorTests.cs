@@ -182,6 +182,115 @@ public class RunExecutorTests
         w.Env.Ups.Should().BeEmpty();
     }
 
+    // ---- T8 red-team regressions (F-05, F-06, F-07) ---------------------------------------------------------------------------------
+
+    [Fact]
+    public async Task F05_A_stale_container_list_after_compose_up_does_not_turn_a_good_deploy_into_a_failure()
+    {
+        var w = new RunWorld(new RunWorld.SvcSpec("web", IdWeb, "nginx:1.27", Writable: true));
+        w.Env.StaleReadsAfterUp = 2; // the post-deploy reads joined a fetch that started before the recreate
+
+        (await w.RunAsync(await w.ApprovedRunAsync())).Should().Be("completed");
+
+        w.Env.Services["web"].Image.Should().Be(RunWorld.New);
+        w.Images.Tags["nginx:1.27"].Should().Be(RunWorld.New, "the tag stays on the good image");
+        w.Notes.Types.Should().NotContain("service.left_down");
+        w.Quarantine.ReceivedCalls().Should().BeEmpty("a good digest must not be quarantined");
+    }
+
+    [Fact]
+    public async Task F06_A_docker_error_in_the_health_gate_is_a_failed_check_with_rollback_not_an_unhandled_crash()
+    {
+        var w = TwoServices();
+        w.Env.InspectThrowsFor.Add(RunWorld.New); // every inspect of the new image times out
+
+        var status = await w.RunAsync(await w.ApprovedRunAsync());
+
+        status.Should().Be("rolled_back");
+        w.Env.Services["db"].Image.Should().Be(RunWorld.Old, "the previous image runs again");
+        w.Images.Tags["postgres:17"].Should().Be(RunWorld.Old);
+        w.Runs.IntentsOpen.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task F06_A_docker_error_after_up_on_a_service_without_auto_rollback_leaves_guidance_alert_and_the_tag_restored()
+    {
+        var w = new RunWorld(new RunWorld.SvcSpec("web", IdWeb, "nginx:1.27", Writable: true));
+        w.Env.InspectThrowsFor.Add(RunWorld.New);
+        var id = await w.ApprovedRunAsync();
+
+        (await w.RunAsync(id)).Should().Be("failed");
+
+        var d = await w.DetailAsync(id);
+        d.Info.Reason.Should().NotContain("Unexpected error");
+        d.Info.Result!.Services.Single().Outcome.Should().Be("failed_left_as_is");
+        d.Info.Guidance.Should().Contain(g => g.StartsWith("docker tag " + RunWorld.Old, StringComparison.Ordinal));
+        w.Images.Tags["nginx:1.27"].Should().Be(RunWorld.Old);
+        w.Notes.Events.Should().Contain(e => e.Type == "service.left_down" && e.Severity == "critical");
+    }
+
+    [Fact]
+    public async Task F06_A_container_list_failure_after_up_is_handled_the_same_way()
+    {
+        var w = new RunWorld(new RunWorld.SvcSpec("web", IdWeb, "nginx:1.27", Writable: true));
+        w.Hooks.OnStep = (_, step, _, phase) =>
+        {
+            w.Env.ContainersThrow = step == "deploy" && phase == "end";
+            return Task.CompletedTask;
+        };
+        var id = await w.ApprovedRunAsync();
+
+        var status = await w.RunAsync(id);
+
+        status.Should().Be("failed");
+        (await w.DetailAsync(id)).Info.Result!.Services.Single().Outcome.Should().Be("failed_left_as_is");
+        w.Notes.Events.Should().Contain(e => e.Type == "service.left_down");
+    }
+
+    [Fact]
+    public async Task F06_An_unexpected_exception_still_ends_the_run_with_restore_guidance_and_keeps_the_intent_open()
+    {
+        var w = TwoServices();
+        w.Hooks.OnStep = (_, step, service, phase) =>
+            step == "deploy" && service == "web" && phase == "start" ? throw new InvalidOperationException("boom") : Task.CompletedTask;
+        var id = await w.ApprovedRunAsync();
+
+        (await w.RunAsync(id)).Should().Be("failed");
+
+        var d = await w.DetailAsync(id);
+        d.Info.Guidance.Should().Contain(g => g.Contains("Restore", StringComparison.Ordinal));
+        w.Runs.IntentsOpen.Should().Be(1, "the service may be in any state; restart recovery reports it");
+    }
+
+    [Fact]
+    public async Task F07_A_registry_error_while_re_planning_a_stale_approval_still_ends_the_run()
+    {
+        var w = TwoServices();
+        var id = await w.ApprovedRunAsync();
+        var moved = RunWorld.BuildPlan(new RunWorld.SvcSpec("db", IdDb, "postgres:17"), new RunWorld.SvcSpec("web", IdWeb, "nginx:1.27"));
+        moved = moved with { Services = [.. moved.Services.Select(s => s with { ToDigest = "sha256:" + new string('e', 64) })] };
+        var calls = 0;
+        w.Planner.PlanProjectAsync(default!, default).ReturnsForAnyArgs(_ =>
+            ++calls == 1 ? Task.FromResult(moved with { PlanHash = PlanHasher.Compute(moved) }) : throw new Quaymaster.Application.Registry.RegistryException("rate_limited", "429 Too Many Requests", 429));
+
+        (await w.RunAsync(id)).Should().Be("approval_stale");
+
+        (await w.DetailAsync(id)).Info.Status.Should().Be("approval_stale", "never stuck in 'running'");
+        (await w.Runs.RunningAsync(default)).Should().BeNull();
+    }
+
+    [Fact]
+    public async Task F07_A_transient_database_error_writing_the_final_status_is_retried()
+    {
+        var w = TwoServices();
+        var id = await w.ApprovedRunAsync();
+        w.Runs.FinishFailures = 2;
+
+        (await w.RunAsync(id)).Should().Be("completed");
+
+        (await w.DetailAsync(id)).Info.Status.Should().Be("completed");
+    }
+
     [Fact]
     public async Task Plan_that_changes_between_approval_and_execution_is_approval_stale_and_asks_again()
     {

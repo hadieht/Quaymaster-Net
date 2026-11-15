@@ -68,6 +68,38 @@ public sealed partial class RunExecutor
     /// or a lagging daemon), the full list is kept so the gate fails against what is actually there, not against a
     /// partial set.
     /// </summary>
+    /// <summary>
+    /// F-05: the containers this deploy brought up. Reads fresh (never a list fetched before the mutation) and waits a bounded time
+    /// until as many NEW ids as expected are listed; only then falls back to what is actually there.
+    /// </summary>
+    private async Task<IReadOnlyList<EngineContainer>> NewGenerationAsync(string project, string service, IReadOnlyCollection<string> previousIds, int expectedCount, CancellationToken ct)
+    {
+        IReadOnlyList<EngineContainer> all = [];
+        for (var attempt = 0; attempt < PostDeployListAttempts; attempt++)
+        {
+            all = await ServiceContainersAsync(project, service, ct);
+            var previous = previousIds.ToHashSet(StringComparer.Ordinal);
+            if (all.Count(c => !previous.Contains(c.Id)) >= expectedCount)
+            {
+                break;
+            }
+
+            if (attempt < PostDeployListAttempts - 1)
+            {
+                await Task.Delay(PostDeployListDelay, ct);
+            }
+        }
+
+        return PostDeployLive(previousIds, expectedCount, all);
+    }
+
+    private const int PostDeployListAttempts = 4;
+
+    private static readonly TimeSpan PostDeployListDelay = TimeSpan.FromMilliseconds(250);
+
+    /// <summary>F-06: a Docker / network error while verifying is a failed check (rollback + guidance), never an unhandled crash.</summary>
+    private static bool IsDockerError(Exception e) => e is AppException or HttpRequestException or IOException or TimeoutException;
+
     private static IReadOnlyList<EngineContainer> PostDeployLive(IReadOnlyCollection<string> previousIds, int expectedCount, IReadOnlyList<EngineContainer> all)
     {
         var previous = previousIds.ToHashSet(StringComparer.Ordinal);
@@ -81,8 +113,9 @@ public sealed partial class RunExecutor
         {
             return await planner.PlanProjectAsync(request, CancellationToken.None);
         }
-        catch (Exception e) when (e is AppException or InvalidOperationException or HttpRequestException)
+        catch (Exception e) when (e is not OperationCanceledException and not ProcessCrashedException)
         {
+            // F-07: a failed re-plan (a registry 429 is a RegistryException, not an AppException) only means "no new request"
             return null;
         }
     }
@@ -153,32 +186,40 @@ public sealed partial class RunExecutor
         var why = deploy.Why;
         if (deploy.Ok)
         {
-            var live = PostDeployLive([.. s.Containers.Select(c => c.Id)], s.Containers.Count, await ServiceContainersAsync(plan.Target, s.Service, ct));
-            if (!s.WasRunning)
+            try
             {
-                // stays stopped: only assert that it was recreated on the expected image
-                healthy = live.Count > 0 && live.All(c => c.ImageId == expected);
-                why = healthy ? string.Empty : "the recreated container does not use the expected image";
-                await step.RunAsync("health", s.Service, () => Task.FromResult((true, (JsonObject?)Obj(new { skipped = "service was stopped; stays stopped", ok = healthy }), false)));
-            }
-            else
-            {
-                var r = await step.RunAsync("health", s.Service, async () =>
+                var live = await NewGenerationAsync(plan.Target, s.Service, [.. s.Containers.Select(c => c.Id)], s.Containers.Count, ct);
+                if (!s.WasRunning)
                 {
-                    var res = await health.WaitAsync([.. live.Select(c => c.Id)], SpecFor(s, expected), ct);
-                    return (res, (JsonObject?)Obj(new { ok = res.Ok, reason = res.Reason, ms = res.ElapsedMs }), !res.Ok);
-                });
-                healthy = r.Ok;
-                why = r.Reason;
-
-                // RT-29: dependents of a recreated service are re-verified
-                if (healthy && isUpdate && await VerifyDependentsAsync(plan, s, step, ct) is { } dep)
-                {
-                    return new ServiceRun(
-                        ServiceOutcomes.Failed,
-                        $"{s.Service} is healthy but its dependent \"{dep}\" is not; the rollout was stopped and nothing was rolled back automatically",
-                        [$"Check the dependent service \"{dep}\" (docker compose logs). {s.Service} runs the new image."]);
+                    // stays stopped: only assert that it was recreated on the expected image
+                    healthy = live.Count > 0 && live.All(c => c.ImageId == expected);
+                    why = healthy ? string.Empty : "the recreated container does not use the expected image";
+                    await step.RunAsync("health", s.Service, () => Task.FromResult((true, (JsonObject?)Obj(new { skipped = "service was stopped; stays stopped", ok = healthy }), false)));
                 }
+                else
+                {
+                    var r = await step.RunAsync("health", s.Service, async () =>
+                    {
+                        var res = await health.WaitAsync([.. live.Select(c => c.Id)], SpecFor(s, expected), ct);
+                        return (res, (JsonObject?)Obj(new { ok = res.Ok, reason = res.Reason, ms = res.ElapsedMs }), !res.Ok);
+                    });
+                    healthy = r.Ok;
+                    why = r.Reason;
+
+                    // RT-29: dependents of a recreated service are re-verified
+                    if (healthy && isUpdate && await VerifyDependentsAsync(plan, s, step, ct) is { } dep)
+                    {
+                        return new ServiceRun(
+                            ServiceOutcomes.Failed,
+                            $"{s.Service} is healthy but its dependent \"{dep}\" is not; the rollout was stopped and nothing was rolled back automatically",
+                            [$"Check the dependent service \"{dep}\" (docker compose logs). {s.Service} runs the new image."]);
+                    }
+                }
+            }
+            catch (Exception e) when (IsDockerError(e))
+            {
+                healthy = false;
+                why = $"the health check could not complete (Docker error: {e.Message})";
             }
         }
 
@@ -271,7 +312,16 @@ public sealed partial class RunExecutor
     /// <summary>A service the rollout could not bring back healthy: critical alert (it may be down).</summary>
     private async Task AlertLeftAsync(string runId, Plan plan, PlanService s, string why, CancellationToken ct)
     {
-        var live = await ServiceContainersAsync(plan.Target, s.Service, ct);
+        IReadOnlyList<EngineContainer> live;
+        try
+        {
+            live = await ServiceContainersAsync(plan.Target, s.Service, ct);
+        }
+        catch (Exception e) when (IsDockerError(e))
+        {
+            live = []; // cannot tell: alert as down (the safe reading)
+        }
+
         var down = live.Count == 0 || live.Any(c => c.State != "running");
         notify.Notify(new NotificationEvent(
             "service.left_down",
@@ -288,7 +338,16 @@ public sealed partial class RunExecutor
     {
         var point = await rollback.GetAsync(ImageReferences.RollbackTag(plan.Target, s.Service, runId), ct);
         var oldId = point?.ImageId ?? s.FromImageId;
-        var before = await ServiceContainersAsync(plan.Target, s.Service, ct);
+        IReadOnlyList<EngineContainer> before;
+        try
+        {
+            before = await ServiceContainersAsync(plan.Target, s.Service, ct);
+        }
+        catch (Exception e) when (IsDockerError(e))
+        {
+            before = [];
+        }
+
         var intent = await runs.AddIntentAsync(new NewIntent(runId, s.Service, "rollback", null, oldId, [.. before.Select(c => c.Id)]), Now(), CancellationToken.None);
         var result = await step.RunAsync("rollback", s.Service, async () =>
         {
@@ -314,7 +373,7 @@ public sealed partial class RunExecutor
                     return ((Ok: false, Why: dep.Detail), (JsonObject?)null, true);
                 }
 
-                var live = PostDeployLive([.. before.Select(c => c.Id)], before.Count, await ServiceContainersAsync(plan.Target, s.Service, ct));
+                var live = await NewGenerationAsync(plan.Target, s.Service, [.. before.Select(c => c.Id)], before.Count, ct);
                 if (!s.WasRunning)
                 {
                     var same = live.All(c => c.ImageId == oldId);
@@ -486,7 +545,7 @@ public sealed partial class RunExecutor
         var step = await runs.StartStepAsync(runId, 9999, null, "record", Now(), CancellationToken.None);
         await runs.FinishStepAsync(step, "succeeded", Obj(new { status }), Now(), CancellationToken.None);
         ctx.ReleaseLock(); // the terminal status below is the signal that the next run may start
-        await runs.FinishAsync(runId, status, new RunResult(outcomes, summary), guidance.Count > 0 ? guidance : null, reason, Now(), CancellationToken.None);
+        await FinishWithRetryAsync(runId, status, new RunResult(outcomes, summary), guidance.Count > 0 ? guidance : null, reason);
         env.Invalidate();
         try
         {
@@ -506,6 +565,26 @@ public sealed partial class RunExecutor
         ctx.Log($"run {runId} finished: {status}{(reason is null ? string.Empty : " — " + reason)}\n");
         notify.Notify(NotificationFor(runId, plan.Target, status, summary, guidance));
         return status;
+    }
+
+    /// <summary>
+    /// F-07: the terminal status is what frees the "a run is active" gate; a transient database error must not leave the run
+    /// <c>running</c> forever, so the write is retried and never tied to a cancellation token.
+    /// </summary>
+    private async Task FinishWithRetryAsync(string runId, string status, RunResult result, IReadOnlyList<string>? guidance, string? reason)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                await runs.FinishAsync(runId, status, result, guidance, reason, Now(), CancellationToken.None);
+                return;
+            }
+            catch (Exception e) when (attempt < 5 && e is not ProcessCrashedException)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(200 * attempt), CancellationToken.None);
+            }
+        }
     }
 
     /// <summary>The notification event of a finished run (T5 maps these types to channels).</summary>
@@ -581,7 +660,7 @@ public sealed partial class RunExecutor
 
                     if (s.WasRunning)
                     {
-                        var live = PostDeployLive([.. before.Select(c => c.Id)], before.Count, await ServiceContainersAsync(plan.Target, service, ct));
+                        var live = await NewGenerationAsync(plan.Target, service, [.. before.Select(c => c.Id)], before.Count, ct);
                         var h = await health.WaitAsync([.. live.Select(c => c.Id)], SpecFor(s, p.ImageId), ct);
                         if (!h.Ok)
                         {

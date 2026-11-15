@@ -325,8 +325,15 @@ public sealed partial class RunExecutor(
                     true));
                 if (fresh is { Blocked: null })
                 {
-                    var newId = await RequestAgainAsync(info, meta, fresh);
-                    reason = $"{e.Message}. A new approval request was created ({newId}).";
+                    try
+                    {
+                        var newId = await RequestAgainAsync(info, meta, fresh);
+                        reason = $"{e.Message}. A new approval request was created ({newId}).";
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException and not ProcessCrashedException)
+                    {
+                        // F-07: failing to create the follow-up request must not leave this run non-terminal
+                    }
                 }
             }
 
@@ -344,6 +351,7 @@ public sealed partial class RunExecutor(
         {
             status = RunStatuses.Failed;
             reason = $"Unexpected error: {e.Message}";
+            guidance.Add("An unexpected error interrupted the run while services may have been changed. Check the services (docker compose ps / logs); the previous images are kept as recovery points - use Restore on this run to put them back.");
         }
 
         return await RecordAsync(runId, info, plan, status, reason, outcomes, guidance, ctx);
@@ -369,20 +377,10 @@ public sealed partial class RunExecutor(
             new NewIntent(runId, s.Service, "deploy", s.FromImageId, s.IsUpdate ? stagedImageId : null, [.. s.Containers.Select(c => c.Id)]),
             Now(),
             CancellationToken.None);
-        try
-        {
-            var res = await DeployInnerAsync(runId, plan, s, target, stagedImageId, step, log, ctx, ct);
-            await runs.CompleteIntentAsync(intent, Now(), CancellationToken.None);
-            return res;
-        }
-        catch (ProcessCrashedException)
-        {
-            throw;
-        }
-        catch
-        {
-            await runs.CompleteIntentAsync(intent, Now(), CancellationToken.None);
-            throw;
-        }
+        // F-06: an unexpected exception leaves the intent OPEN on purpose: the service may be in any state and the restart
+        // recovery reports exactly that (a closed intent would hide it)
+        var res = await DeployInnerAsync(runId, plan, s, target, stagedImageId, step, log, ctx, ct);
+        await runs.CompleteIntentAsync(intent, Now(), CancellationToken.None);
+        return res;
     }
 }

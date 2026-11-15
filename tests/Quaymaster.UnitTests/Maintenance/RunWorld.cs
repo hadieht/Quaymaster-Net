@@ -142,8 +142,17 @@ internal sealed class FakeRunStore : IRunStore
         return Task.CompletedTask;
     }
 
+    /// <summary>Number of upcoming <see cref="FinishAsync"/> calls that fail with a transient database error (F-07).</summary>
+    public int FinishFailures { get; set; }
+
     public Task FinishAsync(string id, string status, RunResult? result, IReadOnlyList<string>? guidance, string? reason, long now, CancellationToken ct)
     {
+        if (FinishFailures > 0)
+        {
+            FinishFailures--;
+            throw new InvalidOperationException("database is locked");
+        }
+
         var r = Get(id);
         (r.Status, r.Result, r.Guidance, r.Reason, r.FinishedAt) = (status, result, guidance, reason, now);
         return Task.CompletedTask;
@@ -369,8 +378,37 @@ internal sealed class FakeEnv(FakeImages images) : IRunEnvironment
 
     public Task<ProjectTarget> TargetAsync(string project, CancellationToken ct) => Task.FromResult(new ProjectTarget(project, "/srv/shop", ["/srv/shop/compose.yaml"]));
 
-    public Task<IReadOnlyList<EngineContainer>> ContainersAsync(CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<EngineContainer>>([.. Services.SelectMany(kv => kv.Value.Ids.Select(id => new EngineContainer(id, kv.Key + "-1", Project, kv.Key, kv.Value.Image, kv.Value.State, kv.Value.State == "running" ? "Up 1 minute" : "Exited")))]);
+    /// <summary>After an <c>up</c>, this many container reads still return the list from BEFORE it (F-05: single-flight join).</summary>
+    public int StaleReadsAfterUp { get; set; }
+
+    /// <summary>Image ids whose inspect throws a Docker error (F-06: socket timeout after compose up).</summary>
+    public HashSet<string> InspectThrowsFor { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Container reads throw a Docker error while true (F-06).</summary>
+    public bool ContainersThrow { get; set; }
+
+    private List<EngineContainer>? _stale;
+
+    private int _staleLeft;
+
+    private List<EngineContainer> Snapshot() =>
+        [.. Services.SelectMany(kv => kv.Value.Ids.Select(id => new EngineContainer(id, kv.Key + "-1", Project, kv.Key, kv.Value.Image, kv.Value.State, kv.Value.State == "running" ? "Up 1 minute" : "Exited")))];
+
+    public Task<IReadOnlyList<EngineContainer>> ContainersAsync(CancellationToken ct)
+    {
+        if (ContainersThrow)
+        {
+            throw new AppException(503, ErrorCode.DockerUnavailable, "Docker daemon unreachable: timeout");
+        }
+
+        if (_staleLeft > 0 && _stale is not null)
+        {
+            _staleLeft--;
+            return Task.FromResult<IReadOnlyList<EngineContainer>>(_stale);
+        }
+
+        return Task.FromResult<IReadOnlyList<EngineContainer>>(Snapshot());
+    }
 
     public Task<InspectLite?> InspectAsync(string containerId, CancellationToken ct)
     {
@@ -381,6 +419,11 @@ internal sealed class FakeEnv(FakeImages images) : IRunEnvironment
         }
 
         var s = kv.Value;
+        if (InspectThrowsFor.Contains(s.Image))
+        {
+            throw new AppException(503, ErrorCode.DockerUnavailable, "Docker daemon unreachable: timeout");
+        }
+
         var healthy = s.Healthy && !BadImages.Contains(s.Image);
         return Task.FromResult<InspectLite?>(new InspectLite(s.Image, 0, s.State, s.State == "running", false, 0, "2026-11-14T12:00:00Z", healthy ? "healthy" : "unhealthy"));
     }
@@ -388,6 +431,11 @@ internal sealed class FakeEnv(FakeImages images) : IRunEnvironment
     public Task<DeployResult> UpAsync(string project, string service, bool forceRecreate, bool noStart, Action<string> log, CancellationToken ct)
     {
         Ups.Add(service);
+        if (StaleReadsAfterUp > 0)
+        {
+            (_stale, _staleLeft) = (Snapshot(), StaleReadsAfterUp);
+        }
+
         if (UpFails.Contains(service))
         {
             return Task.FromResult(new DeployResult(false, 1, "docker compose up exited with code 1: boom", ["compose", "up"]));
