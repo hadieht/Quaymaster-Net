@@ -38,11 +38,14 @@ bash "$FX/up.sh" all >/dev/null
 bash "$FX/upd-up.sh" >/dev/null
 bash "$FX/publish.sh" app 2 good >/dev/null # a new release the UI flow can roll out
 
+echo "== build api"
+dotnet build src/Quaymaster.Api --nologo -v q >/dev/null
+
 echo "== server on 127.0.0.1:$PORT"
 QM_HOST=127.0.0.1 QM_PORT="$PORT" QM_DATA_DIR="$DATA" QM_SECRET_KEY="$(openssl rand -base64 32)" \
   QM_MANAGED_SCOPE='qmtest-*' QM_VISIBLE_SCOPE='qmtest-*' QM_STACK_PATHS="$FXDIR/stacks" \
   QM_DOCKER_ROOT_MOUNT="$FXDIR" QM_REGISTRY_INSECURE=127.0.0.1:5055 QM_SCRYPT_LOG2_N=14 \
-  QM_WEB_DIR="$ROOT/web/dist" dotnet run --project src/Quaymaster.Api --no-launch-profile >"$DATA/server.log" 2>&1 &
+  QM_WEB_DIR="$ROOT/web/dist" dotnet "$ROOT/src/Quaymaster.Api/bin/Debug/net10.0/Quaymaster.Api.dll" >"$DATA/server.log" 2>&1 &
 SERVER_PID=$!
 for _ in $(seq 1 60); do
   curl -fsS "http://127.0.0.1:$PORT/healthz" >/dev/null 2>&1 && break

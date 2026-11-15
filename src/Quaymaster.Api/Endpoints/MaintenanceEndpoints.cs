@@ -111,24 +111,24 @@ public static class MaintenanceEndpoints
                 new CreateRunRequest(b.Project!, b.Services, b.ApplyDrift == true, b.AllowUnhealthy == true, b.StartNow == true, b.Confirm, b.WindowId, b.IgnoreWindow == true),
                 http.ActorOf(),
                 null,
-                http.RequestAborted);
+                CancellationToken.None); // state-changing: completes even if the client navigates away (Node parity)
             return Results.Json(run, statusCode: run.Status is RunStatuses.Approved or RunStatuses.Running ? StatusCodes.Status202Accepted : StatusCodes.Status201Created);
         });
 
         admin.MapPost("/maintenance/runs/{id}/approve", async (HttpContext http, string id, IValidator<ApproveBody> validator, IRunService runs) =>
         {
             var b = await StrictJsonBody.ReadAsync(http, validator);
-            return Results.Json(await runs.ApproveAsync(id, b.PlanHash!, http.ActorOf(), http.RequestAborted), statusCode: StatusCodes.Status202Accepted);
+            return Results.Json(await runs.ApproveAsync(id, b.PlanHash!, http.ActorOf(), CancellationToken.None), statusCode: StatusCodes.Status202Accepted);
         });
 
         admin.MapPost("/maintenance/runs/{id}/reject", async (HttpContext http, string id, IRunService runs) =>
-            await runs.RejectAsync(id, http.ActorOf(), http.RequestAborted));
+            await runs.RejectAsync(id, http.ActorOf(), CancellationToken.None));
 
         // Config-clone update of a standalone (non-Compose) container; manual only. 202 with the run (+ `runId`); output streams on /stream/operations/:runId.
         admin.MapPost("/maintenance/standalone", async (HttpContext http, IValidator<StandaloneBody> validator, IStandaloneService standalone, IRunService runs) =>
         {
             var b = await StrictJsonBody.ReadAsync(http, validator);
-            var runId = await standalone.StartAsync(new StandaloneRequest(b.Container!, b.Confirm), http.ActorOf(), http.RequestAborted);
+            var runId = await standalone.StartAsync(new StandaloneRequest(b.Container!, b.Confirm), http.ActorOf(), CancellationToken.None);
             var run = System.Text.Json.JsonSerializer.SerializeToNode(await runs.GetAsync(runId, http.RequestAborted), WebJson)!.AsObject();
             run["runId"] = runId;
             return Results.Json(run, statusCode: StatusCodes.Status202Accepted);
@@ -138,7 +138,7 @@ public static class MaintenanceEndpoints
         admin.MapPost("/maintenance/runs/{id}/restore", async (HttpContext http, string id, IValidator<RestoreBody> validator, IRunService runs) =>
         {
             var b = await StrictJsonBody.ReadAsync(http, validator);
-            return Results.Json(await runs.RestoreAsync(id, b, http.ActorOf(), http.RequestAborted), statusCode: StatusCodes.Status202Accepted);
+            return Results.Json(await runs.RestoreAsync(id, b, http.ActorOf(), CancellationToken.None), statusCode: StatusCodes.Status202Accepted);
         });
     }
 }

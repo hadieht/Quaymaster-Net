@@ -90,9 +90,7 @@ if (config.TrustProxy.Count > 0)
 }
 
 app.UseMiddleware<SecurityHeadersMiddleware>();
-app.UseRouting();
-app.UseMiddleware<ApiGuardMiddleware>();
-
+// Static files run before routing: the static-file middleware stands down once an endpoint (the SPA fallback) is selected.
 var webDir = SiteEndpoints.ResolveWebDir(config, app.Environment.ContentRootPath);
 if (webDir is not null)
 {
@@ -106,6 +104,9 @@ if (webDir is not null)
                     : "no-cache",
     });
 }
+
+app.UseRouting();
+app.UseMiddleware<ApiGuardMiddleware>();
 
 var api = app.MapGroup("/api/v1");
 AuthEndpoints.Map(api);
