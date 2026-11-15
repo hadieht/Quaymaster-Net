@@ -31,6 +31,13 @@ internal sealed class SessionRepository(IDbContextFactory<AppDbContext> factory)
         await db.Sessions.Where(s => s.IdHash == idHash).ExecuteDeleteAsync(ct);
     }
 
+    public async Task<IReadOnlyList<Session>> ListForUserAsync(long userId, CancellationToken ct)
+    {
+        await using var db = await factory.CreateDbContextAsync(ct);
+        var rows = await db.Sessions.AsNoTracking().Where(s => s.UserId == userId).ToListAsync(ct);
+        return [.. rows.OrderByDescending(s => s.LastSeen)];
+    }
+
     public async Task<IReadOnlyList<string>> DeleteForUserAsync(long userId, string? exceptIdHash, CancellationToken ct)
     {
         await using var db = await factory.CreateDbContextAsync(ct);

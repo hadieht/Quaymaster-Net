@@ -66,6 +66,9 @@ internal sealed class InMemorySessionRepository : ISessionRepository
         return Task.CompletedTask;
     }
 
+    public Task<IReadOnlyList<Session>> ListForUserAsync(long userId, CancellationToken ct) =>
+        Task.FromResult<IReadOnlyList<Session>>([.. Rows.Values.Where(s => s.UserId == userId).OrderByDescending(s => s.LastSeen)]);
+
     public Task<IReadOnlyList<string>> DeleteForUserAsync(long userId, string? exceptIdHash, CancellationToken ct)
     {
         var gone = Rows.Values.Where(s => s.UserId == userId && s.IdHash != exceptIdHash).Select(s => s.IdHash).ToList();

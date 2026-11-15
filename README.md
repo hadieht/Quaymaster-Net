@@ -31,17 +31,49 @@ rebuilt on a **modern .NET 10 backend** with an unchanged React frontend.
 
 ## Quick start (development)
 
+The .NET server serves the built SPA itself from `QM_WEB_DIR` (the directory containing `index.html`; unset = API only).
+Two workflows:
+
+**A. Hot-reloading UI (two processes)**
+
 ```sh
-# backend
-dotnet run --project src/Quaymaster.Api
-# frontend (dev server, proxies /api to the backend)
-npm install && npm run dev -w web
-# or everything in Docker:
-docker compose up --build
+npm install
+# terminal 1 — API on 127.0.0.1:8787 (default QM_PORT), data in ./.local/dev-data
+QM_DATA_DIR=.local/dev-data QM_SECRET_KEY="$(openssl rand -base64 32)" \
+  dotnet run --project src/Quaymaster.Api --no-launch-profile
+# terminal 2 — Vite on http://127.0.0.1:5173, proxies /api to the API
+npm run dev -w web
 ```
+
+The proxy target is `http://127.0.0.1:8787`; if the API listens elsewhere set `QM_DEV_API=http://127.0.0.1:<port>`
+for the Vite process. The proxy rewrites `Origin` to the target so the server's origin check on mutating requests passes.
+Open the Vite URL (5173), not the API port.
+
+**B. Production-like (single process, built SPA)**
+
+```sh
+npm run build                      # shared + web -> web/dist
+QM_WEB_DIR="$PWD/web/dist" QM_DATA_DIR=.local/dev-data QM_SECRET_KEY="$(openssl rand -base64 32)" \
+  dotnet run --project src/Quaymaster.Api --no-launch-profile   # http://127.0.0.1:8787
+```
+
+Or everything in Docker: `docker compose up --build`.
 
 First run: the server prints a one-time setup token (or `<data>/setup-token`);
 create the first admin with it. There is no default password.
+
+### Tests
+
+```sh
+dotnet test                 # unit + integration (Category=Live tests need the local Docker daemon)
+npm run build && npm run e2e          # Playwright against the .NET server and test-fixtures/ (qmtest-* only)
+npm run screenshots                   # regenerates docs/screenshots/*.png from a neutral fixture copy (/srv/qmtest/test-fixtures)
+```
+
+`e2e/run.sh` builds the API, starts the fixture stacks, runs the server on `127.0.0.1:${E2E_PORT:-8791}` with
+`QM_MANAGED_SCOPE=QM_VISIBLE_SCOPE=qmtest-*`, runs Playwright, and tears everything down on exit. Prerequisites:
+`npm run build`, Docker, the local `alpine` image, `npx playwright install chromium`.
+Check for leftovers with `docker ps -a --filter label=quaymaster.test=true` (must be empty).
 
 ## Security
 

@@ -443,3 +443,21 @@ old lock-based check (stale since the 567a5a3 checkpoint).
 
 **Evidence.** Isolated filter `Overlapping_runs` 3/3 passed in a row; full `dotnet test -c Release` after the fix: integration 289 passed / 0 failed / 0 skipped (live tests
 included, 5m17s); unit 648/648 after the fake fix; `dotnet build` 0 warnings / 0 errors; `npm run build` green.
+
+## T6b — Playwright e2e green + screenshots (forge, 2026-11-15) — **COMPLETE**
+
+`e2e/run.sh` adaptation verified (builds the API, runs the built dll directly so the PID we kill is the server, 127.0.0.1 only, qmtest-* scope, fixtures torn down in the trap).
+Specs (`app.spec.ts`, `screenshots.spec.ts`) are **unchanged**. Two contract bugs found and fixed in the API:
+
+1. **Client abort cancelled state-changing runs.** The spec clicks "Prepare run" and immediately `goto`s another page; the aborted request cancelled `POST /maintenance/runs`
+   (`HttpContext.RequestAborted`), so no run was created (Node ran the handler to completion). Mutating run endpoints (create / approve / reject / standalone start / restore)
+   now use `CancellationToken.None`.
+2. **Five UI endpoints from the original `routes/webapi.ts` were missing** (404 "Route not found", visible on Settings → General in the first screenshot run, and Security/cron preview/dashboard charts):
+   `GET /system/settings`, `GET /auth/sessions`, `DELETE /auth/sessions/{id}`, `GET /maintenance/cron/preview`, `GET /stats/overview`
+   (new `WebApiEndpoints.cs`, `ISessionRepository.ListForUserAsync`, `IStatsStore.SinceAsync`). Route-table diff original vs .NET is now empty.
+   Also: static files run before routing (SPA fallback) — Program.cs edit that was left uncommitted by T6a.
+
+Screenshots: `npm run screenshots` runs from a neutral copy of the fixtures (`/srv/qmtest/test-fixtures`, same as the original), so no host paths appear (Settings shows `/srv/qmtest/test-fixtures/stacks`).
+vite.config.ts needed no change (default proxy target `http://127.0.0.1:8787` = .NET default port; `QM_DEV_API` overrides). README has the dev workflow.
+
+Gap: no dedicated integration tests for the five new endpoints (verified live with curl + the UI screenshots).

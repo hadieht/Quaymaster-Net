@@ -36,6 +36,9 @@ public interface IStatsStore
 
     Task<IReadOnlyList<RollupRow>> HistoryAsync(string containerId, long sinceMinute, int limit, CancellationToken ct);
 
+    /// <summary>Every container's roll-ups since a minute, ordered by container then minute (dashboard overview).</summary>
+    Task<IReadOnlyList<RollupRow>> SinceAsync(long sinceMinute, int limit, CancellationToken ct);
+
     Task<int> PruneAsync(long olderThanMinute, CancellationToken ct);
 }
 

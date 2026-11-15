@@ -116,6 +116,7 @@ UpdateEndpoints.Map(api);
 MaintenanceEndpoints.Map(api);
 NotificationEndpoints.Map(api);
 MiscEndpoints.Map(api);
+WebApiEndpoints.Map(api);
 StreamEndpoints.Map(api);
 SiteEndpoints.Map(app, webDir);
 

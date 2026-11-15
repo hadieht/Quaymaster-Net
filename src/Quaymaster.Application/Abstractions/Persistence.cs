@@ -33,6 +33,9 @@ public interface ISessionRepository
     Task TouchAsync(string idHash, DateTimeOffset now, CancellationToken ct);
     Task DeleteAsync(string idHash, CancellationToken ct);
 
+    /// <summary>The user's sessions, most recently seen first.</summary>
+    Task<IReadOnlyList<Session>> ListForUserAsync(long userId, CancellationToken ct);
+
     /// <summary>Deletes every session of a user (optionally keeping one) and returns the removed id hashes.</summary>
     Task<IReadOnlyList<string>> DeleteForUserAsync(long userId, string? exceptIdHash, CancellationToken ct);
 
