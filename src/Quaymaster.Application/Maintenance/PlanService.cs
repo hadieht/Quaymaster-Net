@@ -571,7 +571,7 @@ public sealed class PlannerService(
             {
                 required += (long)Math.Ceiling(2.5 * await registry.CompressedSizeAsync(r, s.ToDigest!, ct));
             }
-            catch (Exception e) when (e is AppException or HttpRequestException or TaskCanceledException)
+            catch (Exception e) when (e is AppException or HttpRequestException or TaskCanceledException or Registry.RegistryException)
             {
                 required = null; // unknown: reported, the floor still applies
                 break;

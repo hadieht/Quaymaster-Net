@@ -27,22 +27,44 @@ internal sealed class QmBackgroundHost(
         await Task.WhenAll(tasks.Select(t => RunIsolatedAsync(t, stoppingToken)));
     }
 
+    /// <summary>First wait before a crashed task is started again; doubles up to <see cref="MaxRestartDelay"/> (F-08).</summary>
+    internal static TimeSpan RestartDelay { get; set; } = TimeSpan.FromSeconds(5);
+
+    private static readonly TimeSpan MaxRestartDelay = TimeSpan.FromMinutes(5);
+
     private async Task RunIsolatedAsync(IQMBackgroundTask task, CancellationToken ct)
     {
-        try
+        var delay = RestartDelay;
+        while (!ct.IsCancellationRequested)
         {
-            Log.BackgroundTaskStarted(log, task.Name);
-            await task.RunAsync(ct);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            // shutting down
-        }
+            try
+            {
+                Log.BackgroundTaskStarted(log, task.Name);
+                await task.RunAsync(ct);
+                return; // a task that returns normally is finished
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                return; // shutting down
+            }
 #pragma warning disable CA1031 // a crashing task must never take the process down
-        catch (Exception e)
+            catch (Exception e)
 #pragma warning restore CA1031
-        {
-            Log.BackgroundTaskCrashed(log, e, task.Name);
+            {
+                Log.BackgroundTaskCrashed(log, e, task.Name);
+            }
+
+            // F-08: a crash used to end the task until the next start (silently stopping schedules, approval expiry, disk alerts)
+            try
+            {
+                await Task.Delay(delay, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+
+            delay = TimeSpan.FromTicks(Math.Min(delay.Ticks * 2, MaxRestartDelay.Ticks));
         }
     }
 }

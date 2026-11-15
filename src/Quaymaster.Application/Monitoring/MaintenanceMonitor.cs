@@ -62,8 +62,9 @@ public sealed partial class MaintenanceMonitor(
                 {
                     await TickAsync(stoppingToken);
                 }
-                catch (AppException e)
+                catch (Exception e) when (!stoppingToken.IsCancellationRequested)
                 {
+                    // F-08: nothing a single tick throws (a registry 429, a timeout ...) may end the monitor for good
                     Log.TickFailed(log, e.Message);
                 }
             }
@@ -96,7 +97,7 @@ public sealed partial class MaintenanceMonitor(
         {
             await body();
         }
-        catch (AppException e)
+        catch (Exception e) when (e is not OperationCanceledException || e is TaskCanceledException)
         {
             Log.PartFailed(log, part, e.Message);
         }
@@ -139,6 +140,10 @@ public sealed partial class MaintenanceMonitor(
                 try
                 {
                     await FireAsync(sc, due[i], ct);
+                }
+                catch (Exception e) when (e is not AppException && !ct.IsCancellationRequested)
+                {
+                    Log.ScheduleFailed(log, sc.Name, e.Message); // F-08: one bad occurrence never stops the rest
                 }
                 catch (AppException e)
                 {
