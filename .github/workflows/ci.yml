@@ -16,6 +16,8 @@ jobs:
         with:
           dotnet-version: 10.0.x
       - name: Start test fixtures (Docker Compose)
+        env:
+          DOCKER_GID: "999"
         run: |
           cd test-fixtures
           docker compose up -d --wait
