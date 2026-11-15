@@ -7,6 +7,7 @@ using Quaymaster.Application.Errors;
 using Quaymaster.Application.Validation;
 using Quaymaster.Domain.Auditing;
 using Quaymaster.Domain.Maintenance;
+using Quaymaster.Domain.Stats;
 
 namespace Quaymaster.Api.Endpoints;
 
@@ -114,51 +115,32 @@ public static class WebApiEndpoints
             return new { valid = true, error = (string?)null, nextRuns = runs };
         });
 
-        // Host-wide container resource history (1-minute roll-ups, summed over all containers).
+        // Host-wide container resource history (1-minute roll-ups, summed over all containers; long windows are bucketed).
         api.MapGet("/stats/overview", async (HttpContext http, IStatsStore store, TimeProvider time) =>
         {
             var q = new QueryReader(k => http.Request.Query[k].FirstOrDefault());
-            var minutes = q.NumberInRange("minutes", 5, 1440, 60) ?? 60;
+            const int maxMinutes = 30 * 24 * 60; // = the QM_STATS_RETENTION_HOURS ceiling (720 h)
+            var minutes = q.NumberInRange("minutes", 5, maxMinutes, 60) ?? 60;
+            var bucket = q.NumberInRange("bucket", 1, 1440);
+            var sinceParam = q.Number64InRange("since", 0, long.MaxValue);
+            var untilParam = q.Number64InRange("until", 0, long.MaxValue);
             q.ThrowIfInvalid();
-            var nowMin = time.GetUtcNow().ToUnixTimeMilliseconds() / 60_000;
-            var rows = await store.SinceAsync(nowMin - minutes, 100_000, http.RequestAborted);
-            var byMinute = new SortedDictionary<long, OverviewPoint>();
-            var prev = new Dictionary<string, (long Minute, long Rx, long Tx)>(StringComparer.Ordinal);
-            foreach (var r in rows)
+            var nowMinute = time.GetUtcNow().ToUnixTimeMilliseconds() / 60_000;
+            var until = untilParam ?? nowMinute;
+            var since = sinceParam ?? (until - minutes);
+            if (until <= since || until - since > maxMinutes)
             {
-                if (!byMinute.TryGetValue(r.Minute, out var p))
-                {
-                    p = new OverviewPoint { T = r.Minute * 60_000 };
-                    byMinute[r.Minute] = p;
-                }
-
-                p.Cpu += r.CpuAvg;
-                p.Mem += r.MemAvg;
-                // Network counters are cumulative: a rate needs two samples, and a drop means a restart (skipped).
-                if (prev.TryGetValue(r.ContainerId, out var before) && r.Minute > before.Minute && r.NetRx >= before.Rx && r.NetTx >= before.Tx)
-                {
-                    var secs = (r.Minute - before.Minute) * 60.0;
-                    p.NetRx += (r.NetRx - before.Rx) / secs;
-                    p.NetTx += (r.NetTx - before.Tx) / secs;
-                }
-
-                prev[r.ContainerId] = (r.Minute, r.NetRx, r.NetTx);
+                throw AppException.BadRequest($"since/until must span 1..{maxMinutes} minutes (epoch minutes)");
             }
 
-            return new { points = byMinute.Values.Select(p => new { t = p.T, cpu = p.Cpu, mem = p.Mem, netRx = p.NetRx, netTx = p.NetTx }).ToArray() };
+            var aggregator = new OverviewAggregator();
+            await foreach (var row in store.StreamAsync(since, until, http.RequestAborted))
+            {
+                aggregator.Add(row);
+            }
+
+            var points = aggregator.Build(bucket ?? RollupBucketing.AutoBucket(until - since));
+            return new { points = points.Select(p => new { t = p.T, cpu = p.Cpu, mem = p.Mem, netRx = p.NetRx, netTx = p.NetTx }).ToArray() };
         });
-    }
-
-    private sealed class OverviewPoint
-    {
-        public long T { get; init; }
-
-        public double Cpu { get; set; }
-
-        public double Mem { get; set; }
-
-        public double NetRx { get; set; }
-
-        public double NetTx { get; set; }
     }
 }

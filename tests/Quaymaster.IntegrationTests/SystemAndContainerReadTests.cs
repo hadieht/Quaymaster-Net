@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using Quaymaster.IntegrationTests.Support;
 
 namespace Quaymaster.IntegrationTests;
@@ -150,6 +151,41 @@ public sealed class SystemAndContainerReadTests : IAsyncLifetime
         (await _h.Viewer.GetAsync("/containers/web/stats/history?bucket=0")).Status.Should().Be(400);
         (await _h.Viewer.GetAsync("/containers/web/stats/history?since=100&until=50")).Status.Should().Be(400);
         (await _h.Viewer.GetAsync("/containers/web/stats/history?since=100&until=160&bucket=5")).Status.Should().Be(200);
+    }
+
+    [Fact]
+    public async Task Stats_Overview_Windows_Buckets_And_Validation()
+    {
+        var store = _h.Factory.Services.GetRequiredService<Quaymaster.Application.Docker.IStatsStore>();
+        const long start = 1_000_000;
+        var rows = new List<Quaymaster.Domain.Stats.RollupRow>();
+        for (var m = 0; m < 120; m++)
+        {
+            foreach (var id in new[] { "a", "b" })
+            {
+                rows.Add(new Quaymaster.Domain.Stats.RollupRow(id, start + m, id, 6, 10, 10, 100, 100, m * 600L, m * 1200L, 0, 0));
+            }
+        }
+
+        await store.UpsertManyAsync(rows, default);
+
+        var raw = await _h.Viewer.GetAsync($"/stats/overview?since={start}&until={start + 119}");
+        raw.Status.Should().Be(200);
+        var pts = raw.Json.GetProperty("points").EnumerateArray().ToList();
+        pts.Should().HaveCount(120);
+        pts[5].GetProperty("cpu").GetDouble().Should().Be(20);
+        pts[5].GetProperty("netRx").GetDouble().Should().BeApproximately(20, 1e-9); // 2 containers x 600 B / 60 s
+
+        var bucketed = await _h.Viewer.GetAsync($"/stats/overview?since={start}&until={start + 119}&bucket=60");
+        bucketed.Status.Should().Be(200);
+        var bp = bucketed.Json.GetProperty("points").EnumerateArray().ToList();
+        bp.Count.Should().BeInRange(2, 3);
+        bp[0].GetProperty("mem").GetDouble().Should().Be(200);
+
+        (await _h.Viewer.GetAsync("/stats/overview?minutes=43200")).Status.Should().Be(200);
+        (await _h.Viewer.GetAsync("/stats/overview?minutes=43201")).Status.Should().Be(400);
+        (await _h.Viewer.GetAsync("/stats/overview?bucket=0")).Status.Should().Be(400);
+        (await _h.Viewer.GetAsync("/stats/overview?since=100&until=50")).Status.Should().Be(400);
     }
 
     [Fact]
