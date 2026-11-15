@@ -256,7 +256,7 @@ variable and its range.
 | `QM_LOG_FOLLOW_BYTES_PER_SEC` | `524288`                 | Rate cap for log follow streams.                                                                        |
 | `QM_SCRYPT_LOG2_N`            | `17`                     | scrypt cost (log2 N). Below 14 only in the Testing environment.                                         |
 | `QM_STATS_INTERVAL_SECONDS`   | `10`                     | Stats sampling interval.                                                                                |
-| `QM_STATS_RETENTION_HOURS`    | `48`                     | Stats retention.                                                                                        |
+| `QM_STATS_RETENTION_HOURS`    | `168`                    | Stats retention.                                                                                        |
 | `QM_EVENT_RETENTION_DAYS`     | `14`                     | Docker event retention.                                                                                 |
 | `QM_AUDIT_RETENTION_DAYS`     | `365`                    | Audit retention. Minimum 30.                                                                            |
 | `QM_DISK_FLOOR_BYTES`         | `5368709120`             | Free space that must remain on the Docker root when pulling.                                            |

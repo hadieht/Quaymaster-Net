@@ -88,7 +88,7 @@ public static partial class QmConfigLoader
         var sseTotal = env.Int("QM_SSE_MAX_TOTAL", 32, 1, 1000);
         var logBytes = env.Int("QM_LOG_FOLLOW_BYTES_PER_SEC", 512 * 1024, 1024, 100 * 1024 * 1024);
         var statsInterval = env.Int("QM_STATS_INTERVAL_SECONDS", 10, 2, 3600);
-        var statsRetention = env.Int("QM_STATS_RETENTION_HOURS", 48, 1, 24 * 30);
+        var statsRetention = env.Int("QM_STATS_RETENTION_HOURS", 168, 1, 24 * 30);
         var eventRetention = env.Int("QM_EVENT_RETENTION_DAYS", 14, 1, 365);
         var auditRetention = env.Int("QM_AUDIT_RETENTION_DAYS", 365, 30, 3650);
         var diskFloor = env.Long("QM_DISK_FLOOR_BYTES", 5L * 1024 * 1024 * 1024, 0, long.MaxValue);

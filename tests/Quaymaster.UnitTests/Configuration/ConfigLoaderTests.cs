@@ -56,7 +56,7 @@ public sealed class ConfigLoaderTests
         c.Sse.Should().Be(new SseOptions(8, 32, 524288));
         c.ScryptLog2N.Should().Be(17);
         c.Stats.Interval.Should().Be(TimeSpan.FromSeconds(10));
-        c.Stats.RetentionHours.Should().Be(48);
+        c.Stats.RetentionHours.Should().Be(168);
         c.EventRetentionDays.Should().Be(14);
         c.AuditRetentionDays.Should().Be(365);
         c.DiskFloorBytes.Should().Be(5368709120);
