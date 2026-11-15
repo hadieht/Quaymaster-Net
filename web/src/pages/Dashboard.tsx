@@ -1,8 +1,9 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { q } from '@/api/hooks';
 import { ChartEmpty, TimeChart } from '@/components/domain/TimeChart';
+import { ChartZoomControls } from '@/components/domain/ChartZoomControls';
 import { ContainerStatus, RunBadge, UpdateBadge } from '@/components/domain/badges';
 import {
   Card,
@@ -13,11 +14,13 @@ import {
   LoadingState,
   PageHeader,
   ProgressBar,
+  Segmented,
   StatCard,
 } from '@/components/ui';
 import { ScopeNotice } from '@/components/layout/AppShell';
 import { countContainers, needsAttention } from '@/lib/attention';
 import { bytes, dateTime, duration, percent, relativeTime } from '@/lib/format';
+import { rangeOptions, selectionToWindow, spanLabel, type TimeWindow } from '@/lib/chartWindow';
 
 function MiniList({ children }: { children: React.ReactNode }) {
   return <ul className="divide-y divide-border/60">{children}</ul>;
@@ -62,7 +65,29 @@ export default function Dashboard() {
   const df = useQuery(q.df());
   const info = useQuery(q.info());
   const updates = useQuery(q.updates());
-  const overview = useQuery(q.overview(60));
+  const settings = useQuery(q.settings());
+  const rangeChoices = useMemo(
+    () => rangeOptions(settings.data?.retention.statsHours).filter((o) => o.minutes !== null),
+    [settings.data],
+  );
+  const [range, setRange] = useState<string>('60');
+  const [win, setWin] = useState<TimeWindow | null>(null);
+  const currentRange = rangeChoices.find((o) => o.key === range) ?? rangeChoices[0]!;
+  const rangeMinutes = currentRange.minutes ?? 60;
+  const winQuery = win ? { since: Math.floor(win.from / 60_000), until: Math.ceil(win.to / 60_000) } : null;
+  const overview = useQuery(q.overview(rangeMinutes, winQuery));
+  // The fetched span of the un-zoomed range; zoom steps and panning stay inside it.
+  const bounds = useMemo<TimeWindow>(() => {
+    const to = Date.now();
+    return { from: to - rangeMinutes * 60_000, to };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rangeMinutes, overview.dataUpdatedAt]);
+  const selectRange = (k: string) => {
+    setRange(k);
+    setWin(null);
+  };
+  const visibleSpan = spanLabel((win ?? bounds).to - (win ?? bounds).from);
+  const windowText = win ? `the selected ${visibleSpan}` : `the last ${spanLabel(rangeMinutes * 60_000)}`;
   const schedules = useQuery(q.schedules());
   const runs = useQuery(q.runs(8));
   const events = useQuery(q.events(8));
@@ -88,7 +113,13 @@ export default function Dashboard() {
   const memPct = h && h.memTotal ? (memUsed / h.memTotal) * 100 : 0;
   const root = h?.dockerRoot;
   const diskPct = root ? ((root.total - root.free) / root.total) * 100 : 0;
-  const points = overview.data?.points ?? [];
+  // While a finer window loads, the coarser data stays on screen clipped to the window.
+  const points = useMemo(() => {
+    const all = overview.data?.points ?? [];
+    return win ? all.filter((p) => p.t >= win.from && p.t <= win.to) : all;
+  }, [overview.data, win]);
+  const domain: [number, number] | undefined = win ? [win.from, win.to] : undefined;
+  const onSelect = (from: number, to: number) => setWin(selectionToWindow(from, to, bounds));
 
   return (
     <>
@@ -216,44 +247,59 @@ export default function Dashboard() {
           <Card className="lg:col-span-2">
             <CardHeader
               title="Containers: CPU and memory"
-              description="Sum over all containers, last 60 minutes"
+              description={`Sum over all containers, ${windowText}`}
             />
             <CardBody>
+              <div className="mb-4 flex flex-wrap items-center gap-3">
+                <Segmented
+                  label="Time range"
+                  value={currentRange.key}
+                  onChange={selectRange}
+                  options={rangeChoices.map((o) => ({ key: o.key, label: o.label }))}
+                />
+                <ChartZoomControls win={win} bounds={bounds} onChange={setWin} />
+              </div>
               {points.length < 2 ? (
                 <ChartEmpty />
               ) : (
                 <div className="grid gap-4 md:grid-cols-2">
                   <TimeChart
                     data={points}
+                    domain={domain}
+                    onSelect={onSelect}
                     series={[{ key: 'cpu', label: 'CPU', color: 'accent' }]}
                     format={(v) => `${v.toFixed(0)} %`}
-                    ariaLabel="Total container CPU usage over the last hour"
+                    ariaLabel={`Total container CPU usage over ${windowText}`}
                   />
                   <TimeChart
                     data={points}
+                    domain={domain}
+                    onSelect={onSelect}
                     series={[{ key: 'mem', label: 'Memory', color: 'info' }]}
                     format={(v) => bytes(v, 0)}
-                    ariaLabel="Total container memory usage over the last hour"
+                    ariaLabel={`Total container memory usage over ${windowText}`}
                   />
                 </div>
               )}
             </CardBody>
           </Card>
           <Card className="lg:col-span-2">
-            <CardHeader title="Container network" description="Receive and transmit rate, last 60 minutes" />
+            <CardHeader title="Container network" description={`Receive and transmit rate, ${windowText}`} />
             <CardBody>
               {points.length < 2 ? (
                 <ChartEmpty />
               ) : (
                 <TimeChart
                   data={points}
+                  domain={domain}
+                  onSelect={onSelect}
                   series={[
                     { key: 'netRx', label: 'Received', color: 'healthy' },
                     { key: 'netTx', label: 'Sent', color: 'warning' },
                   ]}
                   format={(v) => `${bytes(v, 0)}/s`}
                   height={160}
-                  ariaLabel="Total container network throughput over the last hour"
+                  ariaLabel={`Total container network throughput over ${windowText}`}
                 />
               )}
             </CardBody>

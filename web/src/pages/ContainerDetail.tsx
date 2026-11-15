@@ -9,8 +9,8 @@ import { StopMonitoringButton } from '@/components/domain/StopMonitoring';
 import { CapabilityBadge, ContainerStatus, HealthBadge } from '@/components/domain/badges';
 import { LogViewer } from '@/components/domain/LogViewer';
 import { ChartEmpty, TimeChart } from '@/components/domain/TimeChart';
+import { ChartZoomControls } from '@/components/domain/ChartZoomControls';
 import {
-  Button,
   Card,
   CardBody,
   CardHeader,
@@ -27,15 +27,7 @@ import {
 } from '@/components/ui';
 import { CAPABILITY_TEXT } from '@/lib/status';
 import { bytes, dateTime, duration, relativeTime, shortImageId } from '@/lib/format';
-import {
-  rangeOptions,
-  selectionToWindow,
-  spanLabel,
-  pan,
-  zoomIn,
-  zoomOut,
-  type TimeWindow,
-} from '@/lib/chartWindow';
+import { rangeOptions, selectionToWindow, type TimeWindow } from '@/lib/chartWindow';
 import { useLive } from '@/state/live';
 
 type Tab = 'overview' | 'resources' | 'logs' | 'config';
@@ -269,8 +261,6 @@ function Resources({ id, limit }: { id: string; limit: number }) {
   const onSelect = isLive
     ? undefined
     : (from: number, to: number) => applyWindow(selectionToWindow(from, to, bounds));
-  const visible = win ?? bounds;
-  const zoomedIn = win !== null;
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
@@ -280,54 +270,7 @@ function Resources({ id, limit }: { id: string; limit: number }) {
           onChange={selectRange}
           options={options.map((o) => ({ key: o.key, label: o.label }))}
         />
-        {isLive ? null : (
-          <div role="group" aria-label="Zoom" className="flex flex-wrap items-center gap-1.5">
-            <Button
-              size="sm"
-              aria-label="Zoom in"
-              onClick={() => applyWindow(zoomIn(visible, bounds))}
-              disabledReason={visible.to - visible.from <= 3_600_000 ? 'Already at the 1 h minimum' : null}
-            >
-              Zoom in
-            </Button>
-            <Button
-              size="sm"
-              aria-label="Zoom out"
-              onClick={() => applyWindow(zoomOut(visible, bounds))}
-              disabledReason={zoomedIn ? null : 'Showing the whole range'}
-            >
-              Zoom out
-            </Button>
-            <Button
-              size="sm"
-              aria-label="Earlier"
-              onClick={() => win && applyWindow(pan(win, bounds, -1))}
-              disabledReason={zoomedIn ? null : 'Zoom in first'}
-            >
-              ◀
-            </Button>
-            <Button
-              size="sm"
-              aria-label="Later"
-              onClick={() => win && applyWindow(pan(win, bounds, 1))}
-              disabledReason={zoomedIn ? null : 'Zoom in first'}
-            >
-              ▶
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              aria-label="Reset zoom"
-              onClick={() => applyWindow(null)}
-              disabledReason={zoomedIn ? null : 'Showing the whole range'}
-            >
-              Reset
-            </Button>
-            <span className="text-xs text-muted" aria-live="polite">
-              Showing {spanLabel(visible.to - visible.from)} · drag on a chart to zoom
-            </span>
-          </div>
-        )}
+        {isLive ? null : <ChartZoomControls win={win} bounds={bounds} onChange={applyWindow} />}
       </div>
       {loading ? (
         <LoadingState />

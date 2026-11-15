@@ -237,16 +237,16 @@ export const q = {
     queryKey: ['sessions'],
     queryFn: () => api.get<{ sessions: SessionEntry[] }>('/auth/sessions'),
   }),
-  overview: (minutes: number) => ({
-    queryKey: ['overview', minutes],
+  /** Host-wide totals for the last `minutes`, or for the epoch-minute window `win` (the server buckets long windows). */
+  overview: (minutes: number, win?: { since: number; until: number } | null) => ({
+    queryKey: ['overview', minutes, win?.since ?? null, win?.until ?? null],
     queryFn: () =>
       api.get<{ points: { t: number; cpu: number; mem: number; netRx: number; netTx: number }[] }>(
         '/stats/overview',
-        {
-          minutes,
-        },
+        win ? { since: win.since, until: win.until } : { minutes },
       ),
     refetchInterval: 30 * SECOND,
+    placeholderData: keepPreviousData,
   }),
   cronPreview: (cron: string, timezone: string) => ({
     queryKey: ['cron-preview', cron, timezone],
