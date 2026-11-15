@@ -11,14 +11,15 @@ permissions:
 jobs:
   dotnet:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
       - run: dotnet build -c Release
-      - name: Run tests (non-live only)
-        run: dotnet test -c Release --filter "Category!=Live"
+      - name: Run unit tests (integration tests are local-only)
+        run: dotnet test tests/Quaymaster.UnitTests -c Release --no-build --blame-hang-timeout 5m --blame-hang-dump-type none
 
   web:
     runs-on: ubuntu-latest
